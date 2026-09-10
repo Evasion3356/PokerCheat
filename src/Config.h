@@ -25,22 +25,35 @@ namespace Config
 {
 	struct Values
 	{
+		// Independent per-feature toggles -- replaces an earlier "cheat
+		// level" tier idea (Little/Lot/Full Tilt) with plain booleans so
+		// each one can be turned on/off on its own.
+		bool ShowCommunityCards = true;
+		bool ShowOthersCards = true;
+		bool ShowWinPrediction = true;
+
 		// HUD text panel (the seat/board/verdict text block).
 		float PanelX = 0.015f;
 		float PanelY = 0.30f;
 		float TextScale = 0.32f;
 		float TitleTextScale = 0.38f;
 
+#ifdef _DEBUG
 		// 2D community-card icon strip, top-right of screen -- see
 		// PokerCheat.cpp's DrawCommunityCardIcons() header comment for
-		// how these were calibrated. Values below are the user-confirmed
-		// "perfect" ones from direct in-game tuning via Reload Config,
-		// not the original grid/TEST-ICON estimate that seeded them.
+		// how these were calibrated. Debug-only: these are dev-tuning
+		// values, not something an end user should need to calibrate, so
+		// Release doesn't read/write this INI section at all and instead
+		// draws with the fixed values baked in directly (see
+		// DrawCommunityCardIcons()'s Release branch) -- the same
+		// user-confirmed "perfect" numbers below, just not
+		// config-overridable outside Debug.
 		float Card2DIconBaseX = 0.821f;
 		float Card2DIconY = 0.078f;
 		float Card2DIconSpacingX = 0.034f;
 		float Card2DIconWidth = 0.03f;
 		float Card2DIconHeight = 0.075f;
+#endif
 	};
 
 	// Returns the current config, loading it from PokerCheat.ini (next to

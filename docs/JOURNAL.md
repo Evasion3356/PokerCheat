@@ -1398,3 +1398,109 @@ The `GetFloat` perf fix (Config.cpp) compiles clean in Debug; deploy
 copy blocked by RDR2.exe still running (PDB copied, `.asi` didn't) --
 needs a redeploy once the game is closed. The icon-position tuning
 needed no rebuild/redeploy at all, by design.
+
+Final calibrated 2D icon strip values, confirmed "perfect" by the user
+via direct in-game Reload Config iteration (now also PokerCheat.ini's
+own defaults and `Config.h`'s hardcoded fallback, so a missing/deleted
+ini regenerates these instead of the old grid-estimate numbers):
+
+```
+[CommunityCardIcons2D]
+BaseX=0.821
+Y=0.078
+SpacingX=0.034
+Width=0.03
+Height=0.075
+```
+
+### Lag persisted; root cause was worse than the first fix caught -- switched to mINI, and the project became an actual git repo
+
+User reported the hitch on first "Toggle Poker Cheat" was STILL
+happening, and separately noticed PokerCheat.ini wasn't appearing on
+disk at all when missing. The previous fix (only write a key back when
+individually absent) only helps on a file that already exists -- on a
+genuinely missing file every one of the 9 keys counts as absent, so
+all 9 `WritePrivateProfileStringA` calls still fired, same cost as
+before. Worse, that API's writes are cached by Windows without a
+guaranteed immediate flush to disk (the documented workaround is an
+extra all-null call just to force a flush) -- explaining why the file
+didn't show up right after toggling.
+
+User then asked directly whether a "tried and true" INI library was in
+use, and proposed switching to mINI
+(https://github.com/metayeti/mINI, MIT licensed, header-only,
+C++11/17). Agreed -- it reads and writes the whole file in one shot
+rather than per-key, which structurally can't hit either problem above,
+and it's a better foundation for the non-float config values (bools,
+the planned `CheatLevel` enum) still on the agreed release-prep plan.
+
+Per the user's request, made `PokerCheat` an actual git repo first
+(previously untracked, `.gitignore` existed but no `.git`) so mINI
+could be added as a real submodule rather than a plain vendored copy:
+`git init`, an initial commit of the existing tree (133 files, matches
+`CollectorOffline`'s own repo convention -- sibling project, same
+pattern), then `git submodule add
+https://github.com/metayeti/mINI.git external/mINI`.
+
+Rewrote `Config.cpp`/`Config.h` against mINI: `Reload()` now does one
+`file.read()` into an `mINI::INIStructure`, resolves each value with a
+fallback default the same way as before, writes the resolved set back
+with one `file.write(ini, true)` (mINI's "lazy" write -- generates a
+fresh file if none exists, otherwise preserves existing
+formatting/comments and only touches changed/new keys), and caches the
+result the same way `Get()` already did. `ResolveIniPath()` (module-
+handle-based absolute path, same reasoning as before -- avoid trusting
+CWD) is unchanged. Also added `external\mINI\src\mini\ini.h` to the
+vcxproj's `ClInclude` list for IDE visibility, matching how
+`RDR-Classes`'s headers are listed.
+
+Compiles clean in Debug (RDR2.exe running at the time blocked only the
+`.asi` deploy copy, as usual). Both the git-init/submodule work and the
+Config rewrite are committed. Not yet re-tested in-game -- next step is
+confirming the first-toggle hitch is actually gone now, and that a
+freshly-deleted `PokerCheat.ini` regenerates correctly via mINI.
+
+### Feature toggles replace the tier idea; 2D icon config is Debug-only
+
+User dropped the earlier Little/Lot/Full Tilt tier idea in favor of
+three independent booleans, one per feature: `ShowCommunityCards`,
+`ShowOthersCards`, `ShowWinPrediction`. Also: the 2D community-card
+icon strip's config (`[CommunityCardIcons2D]`) should only be
+readable/writable in Debug builds -- Release draws it with the
+confirmed "perfect" values baked in as `constexpr`, no INI section for
+it at all.
+
+`Config.h`'s `Values` struct: added the three bools (default `true`,
+matching current full-featured behavior); wrapped
+`Card2DIconBaseX`/`Y`/`SpacingX`/`Width`/`Height` in `#ifdef _DEBUG` so
+the struct itself doesn't carry those fields in Release. `Config.cpp`'s
+`Reload()` now reads/writes a `[General]` section for the three bools
+(`ParseBoolOr`/`SetBool`, new -- accepts `1/true/yes/on` case-
+insensitively) and wraps the `[CommunityCardIcons2D]` read/write block
+in the same `#ifdef _DEBUG` -- a Release-built `PokerCheat.ini` simply
+never gets that section written.
+
+`PokerCheat.cpp`:
+- `DrawCommunityCardIcons()` now pulls its 5 geometry values from
+  `Config::Get()` only in Debug; Release uses a parallel set of
+  `constexpr kReleaseCard2DIcon*` constants (same numbers, just not
+  config-backed) behind `#ifndef _DEBUG`.
+- Per-seat loop: hand evaluation/comparison (category, `CompareHands`,
+  `worstResult`/`anyOpponent`) still always runs for every active
+  seat regardless of display settings, since the final verdict needs
+  it -- only the *display* is gated. Your own seat is always shown in
+  full (not hidden information in the real game). An opponent seat's
+  cards/hand name are gated by `ShowOthersCards`; the per-seat
+  `[you win]/[they win]/[tie]` tag is treated as its own prediction,
+  gated by `ShowWinPrediction` (so it only appears when both
+  `ShowOthersCards` and `ShowWinPrediction` are on).
+- The "Board:" text line and the 2D icon strip call are both gated by
+  `ShowCommunityCards` (skipped entirely, no line reserved, when off).
+- The final verdict line is gated by `ShowWinPrediction`.
+
+Both Debug and Release compile clean (RDR2.exe running blocked only
+the deploy copy in both, as usual -- Release's single-line
+`PostBuildEvent` surfaces that as an MSBuild error where Debug's
+two-line one doesn't, but the actual compile step for both produced a
+valid `.asi`). Changes are staged but not committed -- no commit
+requested this round. Not yet tested in-game.

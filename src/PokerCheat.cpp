@@ -339,14 +339,24 @@ namespace PokerCheat
 		// 2D community-card icon strip, top-right of screen -- calibrated
 		// by eye against the real game's own card strip using
 		// DrawCalibrationGrid() (thin lines every 0.05, labeled every
-		// 0.1), then hand-tuned further via play testing. Actual values
-		// (position/spacing/size) now live in Config -- PokerCheat.ini's
-		// [CommunityCardIcons2D] section -- specifically because they
-		// needed several rounds of "run it, look at it, tweak one
-		// number" and a config value can be changed with Reload Config
-		// instead of a full rebuild+redeploy+relaunch each time.
+		// 0.1), then hand-tuned further via play testing. Debug builds
+		// read position/spacing/size from Config (PokerCheat.ini's
+		// [CommunityCardIcons2D] section) so they can keep being tuned
+		// live via Reload Config; Release bakes in the user-confirmed
+		// "perfect" values directly as constexpr instead -- an end user
+		// shouldn't need to calibrate pixel positions themselves, and
+		// Release's PokerCheat.ini never gets a [CommunityCardIcons2D]
+		// section written to it at all (see Config.cpp).
 		constexpr int kCard2DIconCount = 5;
 		constexpr int kCard2DPredictedAlpha = 140; // ghosted, matches the old 3D-anchor alpha convention
+
+#ifndef _DEBUG
+		constexpr float kReleaseCard2DIconBaseX = 0.821f;
+		constexpr float kReleaseCard2DIconY = 0.078f;
+		constexpr float kReleaseCard2DIconSpacingX = 0.034f;
+		constexpr float kReleaseCard2DIconWidth = 0.03f;
+		constexpr float kReleaseCard2DIconHeight = 0.075f;
+#endif
 
 		// Draws all 5 eventual community card icons at the calibrated
 		// strip position above -- real revealed cards at full alpha,
@@ -365,7 +375,20 @@ namespace PokerCheat
 				return;
 			}
 
+#ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
+			float baseX = cfg.Card2DIconBaseX;
+			float iconY = cfg.Card2DIconY;
+			float spacingX = cfg.Card2DIconSpacingX;
+			float width = cfg.Card2DIconWidth;
+			float height = cfg.Card2DIconHeight;
+#else
+			float baseX = kReleaseCard2DIconBaseX;
+			float iconY = kReleaseCard2DIconY;
+			float spacingX = kReleaseCard2DIconSpacingX;
+			float width = kReleaseCard2DIconWidth;
+			float height = kReleaseCard2DIconHeight;
+#endif
 
 			for (int i = 0; i < kCard2DIconCount; i++)
 			{
@@ -377,9 +400,9 @@ namespace PokerCheat
 
 				bool predicted = i >= revealCount;
 				int alpha = predicted ? kCard2DPredictedAlpha : 255;
-				float x = cfg.Card2DIconBaseX + static_cast<float>(i) * cfg.Card2DIconSpacingX;
+				float x = baseX + static_cast<float>(i) * spacingX;
 
-				GRAPHICS::DRAW_SPRITE(cardSetDict, textureName, x, cfg.Card2DIconY, cfg.Card2DIconWidth, cfg.Card2DIconHeight, 0.0f, 255, 255, 255, alpha, 0);
+				GRAPHICS::DRAW_SPRITE(cardSetDict, textureName, x, iconY, width, height, 0.0f, 255, 255, 255, alpha, 0);
 			}
 		}
 
@@ -718,6 +741,7 @@ namespace PokerCheat
 				std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
 
 				char line[192];
+				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 
 				if (card0Rank < 2 || card1Rank < 2)
 				{
@@ -728,9 +752,14 @@ namespace PokerCheat
 					std::int32_t category = -1;
 					const char* vsMe = "";
 
+					// Hand evaluation/comparison always runs regardless of
+					// display settings below -- the final verdict line
+					// (ShowWinPrediction) needs every active opponent's
+					// worst-case comparison even when their individual
+					// cards/hand aren't being shown (ShowOthersCards off).
 					if (isActive)
 					{
-						if (static_cast<std::int32_t>(seat) == mySeat)
+						if (isMe)
 						{
 							category = myCategory;
 						}
@@ -754,13 +783,28 @@ namespace PokerCheat
 						}
 					}
 
-					sprintf_s(line, "Seat %u: %s%c %s%c - %s (stack %d, bet %d)%s%s%s",
-						seat,
-						RankName(card0Rank), SuitLetter(card0Suit),
-						RankName(card1Rank), SuitLetter(card1Suit),
-						category >= 0 ? HandCategoryName(category) : "?",
-						stack, bet, stateLabel, vsMe,
-						static_cast<std::int32_t>(seat) == mySeat ? "  (You)" : "");
+					// Your own seat is always shown in full -- that's your
+					// own hand, not hidden information. Opponents' cards/
+					// hand name are gated by ShowOthersCards; the per-seat
+					// win/lose/tie tag is itself a prediction, so it's
+					// additionally gated by ShowWinPrediction, same as the
+					// final verdict line below.
+					const Config::Values& cfg = Config::Get();
+					if (!isMe && !cfg.ShowOthersCards)
+					{
+						sprintf_s(line, "Seat %u: (stack %d, bet %d)%s", seat, stack, bet, stateLabel);
+					}
+					else
+					{
+						const char* shownVsMe = (isMe || !cfg.ShowWinPrediction) ? "" : vsMe;
+						sprintf_s(line, "Seat %u: %s%c %s%c - %s (stack %d, bet %d)%s%s%s",
+							seat,
+							RankName(card0Rank), SuitLetter(card0Suit),
+							RankName(card1Rank), SuitLetter(card1Suit),
+							category >= 0 ? HandCategoryName(category) : "?",
+							stack, bet, stateLabel, shownVsMe,
+							isMe ? "  (You)" : "");
+					}
 				}
 
 				DrawLine(x, y, line);
@@ -779,59 +823,65 @@ namespace PokerCheat
 			// the deck at the current cursor (see kDeckOffset's header
 			// comment -- deterministic, not a guess) and marked with a
 			// trailing "*" so it's clear which cards are real right now
-			// vs. predicted.
-			char boardLine[192] = "Board: ";
-			std::int32_t deckIdx = deckCursor;
-			int cardsShown = 0;
-			for (int i = 0; i < 5; i++)
+			// vs. predicted. Gated by ShowCommunityCards -- both the text
+			// line and the 2D icon strip; boardRanks/boardSuits (used for
+			// hand evaluation above) are computed unconditionally either
+			// way.
+			if (Config::Get().ShowCommunityCards)
 			{
-				std::int32_t rank;
-				std::int32_t suit;
-				bool predicted;
+				char boardLine[192] = "Board: ";
+				std::int32_t deckIdx = deckCursor;
+				int cardsShown = 0;
+				for (int i = 0; i < 5; i++)
+				{
+					std::int32_t rank;
+					std::int32_t suit;
+					bool predicted;
 
-				if (i < revealCount)
-				{
-					rank = ReadInt(thread, kBoardSlot + 1 + i * 2);
-					suit = ReadInt(thread, kBoardSlot + 1 + i * 2 + 1);
-					predicted = false;
-				}
-				else if (deckIdx >= 0 && deckIdx < deckCount)
-				{
-					rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIdx) * 2);
-					suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIdx) * 2 + 1);
-					deckIdx++;
-					predicted = true;
-				}
-				else
-				{
-					break; // deck cursor/count read as invalid -- see below
+					if (i < revealCount)
+					{
+						rank = ReadInt(thread, kBoardSlot + 1 + i * 2);
+						suit = ReadInt(thread, kBoardSlot + 1 + i * 2 + 1);
+						predicted = false;
+					}
+					else if (deckIdx >= 0 && deckIdx < deckCount)
+					{
+						rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIdx) * 2);
+						suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIdx) * 2 + 1);
+						deckIdx++;
+						predicted = true;
+					}
+					else
+					{
+						break; // deck cursor/count read as invalid -- see below
+					}
+
+					char card[10];
+					sprintf_s(card, "%s%c%s ", RankName(rank), SuitLetter(suit), predicted ? "*" : "");
+					strcat_s(boardLine, card);
+					cardsShown++;
 				}
 
-				char card[10];
-				sprintf_s(card, "%s%c%s ", RankName(rank), SuitLetter(suit), predicted ? "*" : "");
-				strcat_s(boardLine, card);
-				cardsShown++;
+				// If the loop above stopped early for a reason OTHER than "the
+				// board is genuinely fully revealed already" (revealCount>=5
+				// needs no deck reads at all, so cardsShown==5 there with no
+				// deck involvement), that means deckCursor/deckCount read as
+				// out of range -- e.g. the deck hasn't been shuffled/dealt
+				// yet at the moment this ran. That's a real, different
+				// situation from "nothing left to predict" and shouldn't look
+				// the same on screen.
+				if (cardsShown < 5 && revealCount < 5)
+					strcat_s(boardLine, "(deck not ready -- cursor/count out of range)");
+
+				DrawLine(x, y, boardLine);
+				y += kLineHeight;
+
+				// Real card-face icons at the calibrated top-right strip
+				// position, using the same real/predicted split as the text
+				// "Board:" line above (boardRanks/boardSuits already hold the
+				// predicted-final-board's 5 cards, computed once up front).
+				DrawCommunityCardIcons(boardRanks, boardSuits, revealCount);
 			}
-
-			// If the loop above stopped early for a reason OTHER than "the
-			// board is genuinely fully revealed already" (revealCount>=5
-			// needs no deck reads at all, so cardsShown==5 there with no
-			// deck involvement), that means deckCursor/deckCount read as
-			// out of range -- e.g. the deck hasn't been shuffled/dealt
-			// yet at the moment this ran. That's a real, different
-			// situation from "nothing left to predict" and shouldn't look
-			// the same on screen.
-			if (cardsShown < 5 && revealCount < 5)
-				strcat_s(boardLine, "(deck not ready -- cursor/count out of range)");
-
-			DrawLine(x, y, boardLine);
-			y += kLineHeight;
-
-			// Real card-face icons at the calibrated top-right strip
-			// position, using the same real/predicted split as the text
-			// "Board:" line above (boardRanks/boardSuits already hold the
-			// predicted-final-board's 5 cards, computed once up front).
-			DrawCommunityCardIcons(boardRanks, boardSuits, revealCount);
 
 			// Real verdict, predicted to showdown -- CompareHands() above
 			// scores both hands itself (category, then kicker-by-kicker;
@@ -849,19 +899,26 @@ namespace PokerCheat
 			// kTableSlotB) and confirmed via ProbeTableStruct: Candidate B
 			// now logs cursor=8, count=52 mid-hand, a sane live deck --
 			// see docs/JOURNAL.md. Verdict wording restored to confident.
-			const char* verdict;
-			if (!haveMyHand)
-				verdict = "You're not in this hand";
-			else if (!anyOpponent)
-				verdict = "You will win (no other active hands)";
-			else if (worstResult > 0)
-				verdict = "Predicted to WIN at showdown";
-			else if (worstResult == 0)
-				verdict = "Predicted to CHOP the pot at showdown";
-			else
-				verdict = "Predicted to LOSE at showdown";
+			// Gated by ShowWinPrediction -- worstResult/anyOpponent above
+			// are still always computed (needed regardless so the
+			// per-seat comparison flows through correctly), only the
+			// display is conditional.
+			if (Config::Get().ShowWinPrediction)
+			{
+				const char* verdict;
+				if (!haveMyHand)
+					verdict = "You're not in this hand";
+				else if (!anyOpponent)
+					verdict = "You will win (no other active hands)";
+				else if (worstResult > 0)
+					verdict = "Predicted to WIN at showdown";
+				else if (worstResult == 0)
+					verdict = "Predicted to CHOP the pot at showdown";
+				else
+					verdict = "Predicted to LOSE at showdown";
 
-			DrawLine(x, y, verdict);
+				DrawLine(x, y, verdict);
+			}
 		}
 	}
 
