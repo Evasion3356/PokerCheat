@@ -9,9 +9,14 @@
 	PokerCheat.ini while the game is running, hit the menu item, see the
 	new values immediately.
 
-	Uses the plain Win32 GetPrivateProfileString/WritePrivateProfileString
-	API rather than a vendored parser -- this is exactly the built-in tool
-	for a Windows-only INI file and needs no extra dependency.
+	Backed by mINI (external/mINI, vendored as a git submodule --
+	https://github.com/metayeti/mINI), not the raw Win32
+	GetPrivateProfileString/WritePrivateProfileString API this started
+	on: that API rewrites/rescans the whole file on every single key
+	access and caches writes without a guaranteed immediate flush to
+	disk, which was the real cause of a hitch (and an INI that didn't
+	reliably appear on disk) the first time the HUD was toggled on. mINI
+	reads and writes the whole file in one shot instead.
 */
 
 #pragma once
