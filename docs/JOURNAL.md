@@ -1502,5 +1502,384 @@ Both Debug and Release compile clean (RDR2.exe running blocked only
 the deploy copy in both, as usual -- Release's single-line
 `PostBuildEvent` surfaces that as an MSBuild error where Debug's
 two-line one doesn't, but the actual compile step for both produced a
-valid `.asi`). Changes are staged but not committed -- no commit
-requested this round. Not yet tested in-game.
+valid `.asi`). Committed as `60562cd` once the user asked for a commit.
+Both configs subsequently rebuilt and deployed clean with the game
+closed.
+
+### Config now loads eagerly at injection, not lazily on first HUD draw
+
+`Config::Get()`'s lazy-load meant `PokerCheat.ini` didn't exist until
+`DrawOverlay()` ran for the first time -- i.e. only after actually
+sitting at a poker table with the cheat enabled. User asked for the
+ASI to load (or create a default) config right at injection instead,
+in both Debug and Release. Added one `Config::Reload()` call at the
+top of `ScriptMain()` (`script.cpp`), right after the "PokerCheat
+started" log line and before `BuildMenu()` -- runs once as soon as
+ScriptHookRDR2 starts the mod's script thread, regardless of whether
+poker_sp ever runs that session. `Config::Get()` itself is unchanged
+(still safe/idempotent to call before or after this).
+
+Both configs build and deploy clean (game closed for both). Not yet
+confirmed in-game that `PokerCheat.ini` now appears immediately on
+launch without needing to reach a table first.
+
+User immediately corrected: this needed to run in `DllMain`, not
+`ScriptMain` -- `ScriptMain` only starts once ScriptHookRDR2 gets
+around to scheduling the registered script thread, which isn't the
+same moment as the ASI actually being injected. Moved the
+`Config::Reload()` call from the top of `ScriptMain()` (`script.cpp`)
+to `main.cpp`'s `DllMain`, `DLL_PROCESS_ATTACH` case, before
+`scriptRegister`/`keyboardHandlerRegister` -- this runs as early as
+Windows itself calls into the DLL after injection. Confirmed safe to
+call this early: `Config::Reload()`'s only work is
+`GetModuleHandleExA`/`GetModuleFileNameA` (both fine pre-`scriptRegister`)
+and mINI's plain file I/O (`std::ifstream`/`std::ofstream`, no
+`LoadLibrary` or cross-thread waits that would risk the DllMain loader
+lock).
+
+Both configs build and deploy clean (game closed for both). Not yet
+confirmed in-game.
+
+### Both crashes root-caused to mINI's <filesystem> usage; fixed by catching it properly, not by abandoning mINI
+
+RDR2 crashed on injection with the DllMain-based `Config::Reload()`
+call above. Windows Event Viewer (`Get-WinEvent` against the
+Application log) showed the real evidence instead of guessing: repeated
+`RDR2.exe` faults in `ntdll.dll`, exception code `0xc00000fd` --
+**STATUS_STACK_OVERFLOW** -- at the exact moment of injection, and
+`PokerCheat.log` didn't exist at all afterward (meaning the crash
+happened before `ScriptMain`'s very first `Log::Write`, i.e. inside
+`DllMain` itself). Moved the call back out of `DllMain` into
+`ScriptMain` (a normal script-thread context, no loader lock held) --
+this alone fixes the injection crash, matching Microsoft's own
+documented DllMain restrictions (DLL_PROCESS_ATTACH holds the loader
+lock; anything beyond trivial kernel32-only work risks exactly this
+kind of loader-reentrancy crash).
+
+Separately, the user reported an EARLIER incident: pressing "Reload
+Config" mid-game (a completely normal context, not DllMain) had shown
+a ScriptHookRDR2 "a script error occurred" MessageBox -- the game kept
+running, but this is ScriptHookRDR2's own generic handler for an
+UNCAUGHT C++ exception thrown from inside the script thread. Two
+separate crashes, same `Config::Reload()` function, same underlying
+library (`mINI`, which pulls in `<filesystem>`) -- strong evidence
+`<filesystem>` itself is the common thread, not merely "called from
+DllMain."
+
+First reaction was to drop mINI back to the pre-mINI plain Win32
+`GetPrivateProfileString` implementation. User pushed back hard on
+this -- correctly: reverting the library doesn't explain *why* it
+failed, and Config.cpp is heading toward the fuller feature set from
+the original release-prep plan (bools, an eventual `CheatLevel`-style
+schema) that the plain Win32 approach is more awkward for. Restored
+mINI (`git checkout HEAD -- src/Config.cpp src/Config.h
+PokerCheat.vcxproj`, `git submodule update --init external/mINI` after
+the local `.git/modules` cache had already been deleted) and actually
+read `ini.h` for real throw sites instead of reverting on suspicion.
+
+Checked `metayeti/mINI`'s own GitHub issues first (`gh`/WebFetch,
+issues #1-#47) -- nothing matches this failure class, so this needed
+tracing from the actual header, not a known upstream bug. Found it:
+`INIWriter::operator<<` (`ini.h`, the `write()`/`generate()` path)
+calls `if (!std::filesystem::exists(filename))` -- the **single-
+argument** overload, which the C++ standard specifies THROWS
+`std::filesystem::filesystem_error` for any stat failure other than
+"file not found" (permission denied, a sharing violation, a transient
+antivirus/indexer lock, etc.), not just returning `false` the way the
+two-argument `error_code&` overload would. Nothing in `Config.cpp` had
+a try/catch anywhere, so any such transient stat failure became an
+uncaught exception -- exactly what both incidents look like.
+
+Fix: split `Config::Reload()`'s body into a private `ReloadImpl()`
+(unchanged logic) and wrapped the actual `Reload()` in
+`try { ReloadImpl(); } catch (const std::filesystem::filesystem_error&
+e) { ... } catch (const std::exception& e) { ... } catch (...) { ... }`,
+logging the real exception -- for `filesystem_error` specifically,
+`e.what()`, `e.code().value()`/`.message()`, and both `e.path1()`/
+`path2()` -- instead of letting it reach ScriptHookRDR2's generic
+handler with zero detail. `g_loaded` is now set unconditionally after
+the try/catch (success or failure) so a persistent failure doesn't
+retry on every single `Get()` call (i.e. every `DrawOverlay()` tick),
+only on an explicit "Reload Config" press.
+
+This doesn't yet prove the exact transient condition that triggered
+the exists() throw in this specific environment (needs an actual
+`filesystem_error:` log line from a real recurrence to confirm) --
+but it turns "the game shows a useless crash dialog" into "PokerCheat.log
+has the real reason," which is the concrete fix asked for, without
+giving up mINI or its one-shot whole-file read/write behavior.
+
+Both configs build and deploy clean (game closed for both). Not yet
+re-tested in-game -- next step is confirming the injection crash is
+actually gone, and if "Reload Config" ever errors again, checking the
+log for the new `filesystem_error:` line to see exactly what
+`e.code().message()` says.
+
+### The try/catch didn't fire either -- real root cause found via debugger, fixed with a dedicated worker thread
+
+The try/catch fix above didn't actually resolve anything: user hit the
+ScriptMain-driven crash again (a ScriptHookRDR2 "an exception occurred
+while executing PokerCheat.ASI" error), but `PokerCheat.log` showed
+only `"PokerCheat started"` -- none of the three new catch blocks
+logged anything. That's a real, informative negative result: a genuine
+thrown `std::filesystem::filesystem_error` (or any `std::exception`)
+WOULD have been caught and logged. Nothing logging at all means the
+failure is happening below the level C++ `catch` can even see -- a
+structured/hardware exception (access violation, stack overflow),
+which normal `/EHsc` `catch(...)` cannot intercept.
+
+Deployed a Debug build and had the user attach a debugger, per their
+request re-enabling the `DllMain`-based call specifically to make the
+crash reproduce on demand again (temporary diagnostic-only change to
+`main.cpp`/`script.cpp`, reverted immediately after). The captured
+fault symbolized to **`_alloca_probe`/`__chkstk`** -- the compiler-
+generated stack-probe helper inserted whenever a function's frame
+needs to grow past a page boundary. Combined with the earlier Event
+Viewer capture (`STATUS_STACK_OVERFLOW`, `0xc00000fd`), this is a
+clean, textbook stack-overflow signature: `__chkstk` is just the
+messenger reporting "no stack left to grow into," not a bug in itself.
+
+Real root cause: ScriptHookRDR2 (same author/architecture as Alexander
+Blade's ScriptHookV for GTA5) is a cooperative script-hook framework --
+`scriptWait()`/`WAIT()`'s signature is the tell -- and frameworks in
+this family are well known in the modding community to run each
+registered script (this mod's `ScriptMain`) on a **Windows fiber with a
+small, fixed stack**, not a normal ~1MB OS thread. `<filesystem>`'s
+narrow-to-wide path conversion pulls in comparatively heavy locale/
+codecvt machinery, especially its first-use lazy initialization --
+plausible to exhaust a small fiber stack even with zero recursion on
+our end. This explains both crash sites uniformly: `DllMain` (loader-
+lock reentrancy is its own separate, independently-sufficient hazard)
+and normal `ScriptMain`-driven menu presses (the fiber's small stack
+being the actual constraint there) were never really two different
+bugs -- both are downstream of running stack-heavy `<filesystem>` code
+somewhere with an inadequate stack.
+
+Fix that keeps mINI/`<filesystem>` entirely intact: `Config::Reload()`
+now spawns a **dedicated worker thread** (`CreateThread`, explicit 4MB
+stack) that runs `ReloadImpl()` wrapped in the try/catch (moved from
+`Reload()` itself into the new `ReloadThreadProc`), and
+`WaitForSingleObject`s on it before returning -- so `Reload()`/`Get()`
+callers see identical synchronous behavior, but the actual
+`<filesystem>`-heavy work now executes on a real, generously-sized
+stack completely outside ScriptHookRDR2's fiber machinery. Reverted
+the temporary `DllMain` diagnostic change back to calling
+`Config::Reload()` from `ScriptMain` only -- spawning/waiting on a
+thread from `DllMain` is itself one of Microsoft's documented DllMain
+restrictions, so this fix specifically requires NOT being invoked from
+there, independent of the stack-size fix.
+
+Both configs build and deploy clean (game closed for both). Not yet
+re-tested in-game -- next step is confirming both the injection path
+and a live "Reload Config" press are actually crash-free now.
+
+### The synchronous wait itself was the next bug -- went fully async
+
+The worker-thread fix crashed too, but differently: Event Viewer showed
+the fault now landing directly inside **`RDR2.exe`'s own code**
+(`Faulting module name: RDR2.exe`, `0xc0000005`), not `ntdll.dll` and
+not `PokerCheat.asi` -- a real change in signature from every crash
+before it (also visible in the same Event Viewer pull: two earlier
+`0xc0000005` faults *inside* `PokerCheat.asi` itself at 7:39, from
+testing in between, then this new RDR2.exe-internal one at 7:45).
+
+Best explanation: `Config::Reload()`'s `WaitForSingleObject(hThread,
+INFINITE)` blocks the calling THREAD, not just our fiber. Cooperative
+script-hook frameworks in this family typically multiplex many fibers
+onto one real OS thread via `SwitchToFiber()` -- if that's what
+ScriptHookRDR2 does here, blocking synchronously from inside one fiber
+doesn't just pause that fiber, it stalls the entire shared thread,
+including whatever else (other scripts, possibly the frame's own
+script-processing step) was meant to run on it. That's a materially
+bigger hazard than the stack-size problem the worker thread was built
+to fix, and lines up with a downstream crash appearing in the game's
+own code once things resume in a bad state.
+
+Fix: made `Config::Reload()` fully fire-and-forget -- `CreateThread`,
+immediately `CloseHandle` without waiting, no synchronization with the
+calling fiber at all. `g_values`/`g_loaded` (now `std::atomic<bool>`,
+release-stored by `ReloadThreadProc` only after every field is written)
+are published asynchronously; `Get()` does a matching acquire-load
+before returning `g_values` so the C++ memory model actually guarantees
+visibility of a fully-written set of values rather than relying
+informally on x64's strong memory ordering. Added
+`g_reloadTriggered` (also atomic, `exchange`-guarded) so `Get()` only
+kicks off the implicit first-load once, not on every call before it
+finishes. Practical tradeoff: `Get()` can return stale/default values
+for the first few frames after any `Reload()` call, including the
+eager startup one -- acceptable given the HUD doesn't render until
+poker_sp is detected (real playtime away) and a file read/write
+finishes in milliseconds; a concurrent second load can field-by-field
+race a reader for one frame, never producing a crash or a torn
+individual value.
+
+Both configs build and deploy clean (game closed for both). Not yet
+re-tested in-game.
+
+### Still crashed -- moved the call site to DllMain instead of ScriptMain
+
+The fully-async fire-and-forget version crashed again. User's question
+cut to the actual assumption worth dropping: `Config::Reload()` doesn't
+touch any game natives or ScriptHookRDR2 state at all, so there was
+never a real requirement that it run from `ScriptMain`'s fiber
+specifically -- that was inherited from the original (pre-crash)
+"eager load" request, not a hard constraint. Moved the call from
+`ScriptMain()` to `main.cpp`'s `DllMain`, `DLL_PROCESS_ATTACH`.
+
+This is safe specifically BECAUSE `Config::Reload()` is already
+fire-and-forget (`CreateThread` + immediate `CloseHandle`, never
+`WaitForSingleObject` -- previous entry): Microsoft's actual documented
+DllMain restriction is against creating a thread and then
+synchronizing with it (waiting) from `DLL_PROCESS_ATTACH`, not against
+spawning one that runs independently. The worker thread itself never
+calls `LoadLibrary`/`FreeLibrary` or touches anything else
+loader-sensitive, just `GetModuleHandleExA`/`GetModuleFileNameA` (read-
+only queries) and plain file I/O.
+
+Added `g_reloadTriggered.store(true, ...)` at the top of
+`Config::Reload()` itself (previously only set inside `Get()`'s
+bootstrap check) so the later first `Get()` call (from `DrawOverlay()`,
+once poker_sp is detected) doesn't redundantly kick off a second load
+on top of the one already started from `DllMain`.
+
+Both configs build and deploy clean (game closed for both). Not yet
+re-tested in-game -- this is now the fourth distinct fix attempt for
+the same underlying crash; if this one still fails, the next diagnostic
+step should probably go back to a debugger capture (same technique
+that found `_alloca_probe` before) rather than reasoning further from
+Event Viewer alone.
+
+### Crash moved into PokerCheat.asi itself -- found a real concurrency bug, plus a narrow/wide encoding fix
+
+DllMain-triggered load crashed again, but progress: the fault this time
+was inside `PokerCheat.asi`, specifically in `_Hash_find_last_result` --
+MSVC STL's internal `std::unordered_map` bucket-lookup helper. mINI's
+own `INIMap<T>::dataIndexMap` is exactly a
+`std::unordered_map<std::string, std::size_t>`, so this is a crash
+inside mINI's own index lookup, not ours.
+
+That pointed at something concrete and real, independent of whether it
+turns out to be THE cause: `Config::Reload()` can now be triggered from
+more than one place with overlapping timing (`DllMain`'s eager load,
+plus an explicit "Reload Config" press could in principle land while
+the first load's worker thread is still running), and the previous
+`ResolveIniPath()` cached its result into a plain `char[]` with **no
+synchronization at all** -- two threads calling it for the first time
+concurrently could race on filling the same buffer, and even past that
+first call, two overlapping `Reload()`s would have two worker threads
+simultaneously reading/writing the SAME `PokerCheat.ini` file. Fixed
+both: `ResolveIniPath()` now uses a function-local `static` ("magic
+static," C++11-guaranteed thread-safe exactly-once initialization)
+instead of the hand-rolled cache, and a new `g_reloadMutex` serializes
+`ReloadThreadProc` so only one reload's file I/O and `g_values` writes
+ever run at a time.
+
+Separately, user asked whether an ASCII/wide-char mismatch could be
+involved. It's real, and connects to the *earlier* `_alloca_probe`
+finding rather than being a competing theory: `ResolveIniPath()` was
+building a narrow `char*` (via `GetModuleFileNameA`/`_splitpath_s`),
+but `mINI::INIFile`'s constructor takes `std::filesystem::path`, whose
+native Windows representation is `wchar_t` -- passing it a narrow
+string forces an implicit narrow-to-wide conversion inside
+`std::filesystem::path`'s own constructor, via the current C locale's
+codecvt facet, **on every single `Reload()` call**. That's exactly the
+class of comparatively heavy, locale-dependent machinery already
+implicated in the original stack-overflow crash. Fixed:
+`ResolveIniPath()` now resolves everything with the wide Win32 APIs
+(`GetModuleFileNameW`/`_wsplitpath_s`) and returns a
+`std::filesystem::path` directly, so mINI never needs to convert
+anything -- not just on the first call, on every one. Log lines that
+print the path switched from `%s`+narrow to `%ls`+`.c_str()`
+accordingly.
+
+Both configs build and deploy clean (game closed for both). Not yet
+re-tested in-game -- this stacks three fixes since the DllMain move
+(mutex serialization, thread-safe path caching, narrow/wide
+elimination) without another debugger capture in between, so if it
+crashes again the next step really should be a fresh capture rather
+than a fifth theory.
+
+### mINI abandoned for real, after crashing a fourth time -- switched to inipp
+
+The mutex + wide-path fixes still crashed. After three real, verified
+bugs fixed (per-key write hitching, then the loader-lock/fiber-stack
+crash, then the concurrency race, then the narrow/wide conversion) and
+a fourth crash on top of all of them, this stopped being "one crash" --
+it was time to try a different library rather than keep patching
+around the same one. Removed the `external/mINI` submodule entirely
+(`git submodule deinit`/`git rm`) and added
+`external/inipp` (https://github.com/mcmtroffaes/inipp) in its place,
+same vendoring convention.
+
+Read `inipp.h` in full before wiring it up (not just the README) --
+concrete, structural reasons it avoids every failure mode mINI hit:
+- **No `<filesystem>` at all.** `inipp::Ini<char>` operates purely over
+  `std::basic_istream`/`std::basic_ostream` (`parse(is)`/`generate(os)`)
+  -- file opening is entirely our own responsibility, done with MSVC's
+  wide-char `ifstream`/`ofstream` constructor overloads directly. No
+  `std::filesystem::path` construction anywhere, so no narrow-to-wide
+  codecvt/locale-facet machinery on any call, and no
+  `std::filesystem::exists()` throw site.
+- **`std::map`, not `std::unordered_map`.** `Ini::Sections`/`Section`
+  are plain `std::map<std::string, ...>` -- a tree, not a hash table,
+  so the exact `_Hash_find_last_result` crash class can't occur here at
+  all. `std::map::operator[]` also never invalidates references to
+  other existing elements on insert (unlike mINI's vector-backed
+  `INIMap`, where growing the outer structure could dangle previously-
+  obtained section references) -- one less thing to reason carefully
+  about.
+- **No exceptions thrown anywhere in the header** (confirmed by reading
+  it fully, not assumed) -- `parse()`/`generate()` are plain
+  `std::getline`/stream/`std::map` operations.
+
+Rewrote `Config.cpp`/`Config.h` against it. Kept both real fixes from
+the mINI chase that are library-agnostic: `g_reloadMutex` (serializes
+concurrent `Reload()` calls) and `ResolveIniPath()`'s function-local-
+static "magic static" caching (thread-safe exactly-once init) --
+both are still correct and needed regardless of which INI library sits
+underneath. `GetOr<T>()` (new, generic) leans on
+`inipp::get_value()`'s actual behavior -- it only writes to its
+out-param on success and leaves it untouched otherwise -- so seeding
+the out-param with the default and ignoring the bool return is exactly
+the right fallback, for any type `inipp::extract<T>` supports.
+`inipp::generate()` always writes the whole structure (no mINI-style
+"lazy" partial update that preserves untouched formatting) -- fine
+here since `parse()` already carried the user's existing values into
+`ini.sections` before we fill in any missing defaults and generate()
+the merged result.
+
+`Config::Reload()`/`Get()`'s actual threading model (fire-and-forget
+worker thread, called from `DllMain`, async publish via
+`std::atomic<bool>`) is unchanged -- none of that was mINI-specific.
+
+Both configs build and deploy clean (game closed for both). Not yet
+tested in-game.
+
+### inipp confirmed working; stripped the worker thread back out
+
+User confirmed in-game: `PokerCheat.ini` now appears immediately on
+injection, no crash. With that confirmed, asked to move back to
+non-threaded -- correct call: the worker thread's entire reason to
+exist was getting `<filesystem>`'s stack-heavy locale/codecvt
+machinery off ScriptHookRDR2's small fiber stack, and inipp never
+touches `<filesystem>` at all (plain `std::getline`/`std::map`/
+`std::basic_istringstream`, all shallow stack usage). That concern
+is gone, so the threading complexity it justified -- worker stack
+size, `g_reloadMutex` serializing overlapping reloads, atomics with
+acquire/release ordering for cross-thread publish -- no longer earns
+its keep either.
+
+`Config::Reload()` is a plain synchronous call again: `ReloadImpl()`
+wrapped in the same try/catch (still just defensive insurance, inipp
+throws nothing), `g_loaded` back to a plain `bool`. Removed
+`ReloadThreadProc`, `CreateThread`/`CloseHandle`, `g_reloadMutex`, and
+both `std::atomic<bool>`s entirely. `DllMain`'s call to
+`Config::Reload()` is unchanged in location (still there, still before
+`scriptRegister`) but is now genuinely ordinary DllMain work -- ordinary
+file I/O, no thread creation, nothing loader-lock-adjacent to reason
+about at all.
+
+Both configs build and deploy clean (game closed for both). Not yet
+re-tested in-game against this specific simplification, but low risk
+given inipp's confirmed-safe call sites are unchanged -- only the
+threading wrapper around them was removed.

@@ -1,104 +1,123 @@
 #include "Config.h"
 #include "Log.h"
 
-#include "..\external\mINI\src\mini\ini.h"
+#include "..\external\inipp\inipp\inipp.h"
 
 #include <windows.h>
+#include <fstream>
 #include <cstdio>
 #include <cstdlib>
-#include <algorithm>
-#include <cctype>
+#include <string>
+#include <exception>
 
 namespace
 {
+	using Section = inipp::Ini<char>::Section;
+
 	Config::Values g_values;
-	bool g_loaded = false;
-	char g_iniPath[MAX_PATH] = {};
+	bool g_loaded = false; // true once a load has actually finished and published g_values
 
 	// Resolves PokerCheat.ini next to this DLL's own .asi, from the
 	// DLL's own module handle rather than trusting the process's CWD to
-	// match the game folder (same reasoning as before mINI: don't
-	// assume, just ask the loader directly).
-	const char* ResolveIniPath()
+	// match the game folder. Returns a WIDE path deliberately: opening
+	// the file below uses MSVC's wide-char ifstream/ofstream constructor
+	// overloads directly, so there's no narrow<->wide conversion
+	// anywhere in this file at all (a real contributor to the crashes
+	// the previous, mINI-based version of this file hit -- see
+	// Config.h's header comment). Function-local static ("magic
+	// static") for thread-safe exactly-once initialization -- C++11
+	// guarantees this is safe even if two threads call it concurrently
+	// for the first time.
+	const std::wstring& ResolveIniPath()
 	{
-		if (g_iniPath[0])
-			return g_iniPath;
+		static const std::wstring path = []() -> std::wstring
+		{
+			HMODULE hModule = nullptr;
+			GetModuleHandleExA(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCSTR>(&ResolveIniPath),
+				&hModule);
 
-		HMODULE hModule = nullptr;
-		GetModuleHandleExA(
-			GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-			reinterpret_cast<LPCSTR>(&ResolveIniPath),
-			&hModule);
+			wchar_t modulePath[MAX_PATH] = {};
+			GetModuleFileNameW(hModule, modulePath, MAX_PATH);
 
-		char modulePath[MAX_PATH] = {};
-		GetModuleFileNameA(hModule, modulePath, MAX_PATH);
+			wchar_t drive[_MAX_DRIVE], dir[_MAX_DIR];
+			_wsplitpath_s(modulePath, drive, _MAX_DRIVE, dir, _MAX_DIR, nullptr, 0, nullptr, 0);
 
-		char drive[_MAX_DRIVE], dir[_MAX_DIR];
-		_splitpath_s(modulePath, drive, _MAX_DRIVE, dir, _MAX_DIR, nullptr, 0, nullptr, 0);
-		sprintf_s(g_iniPath, "%s%sPokerCheat.ini", drive, dir);
+			return std::wstring(drive) + dir + L"PokerCheat.ini";
+		}();
 
-		return g_iniPath;
+		return path;
 	}
 
-	float ParseFloatOr(const std::string& value, float def)
+	// Generic "read or default" on top of inipp::get_value(): that
+	// function only writes into its out-param on success (key present
+	// and parses as T), and leaves it untouched otherwise -- so seeding
+	// the out-param with the default and ignoring the bool return is
+	// exactly the desired fallback behavior, for any T extract<T>
+	// supports (float, bool via std::boolalpha, std::string, ...).
+	template <typename T>
+	T GetOr(const Section& sec, const char* key, T def)
 	{
-		if (value.empty())
-			return def;
-
-		return static_cast<float>(atof(value.c_str()));
+		inipp::get_value(sec, key, def);
+		return def;
 	}
 
-	void SetFloat(mINI::INIMap<std::string>& section, const char* key, float value)
+	void SetFloat(Section& sec, const char* key, float value)
 	{
 		char buf[64];
 		sprintf_s(buf, "%g", value);
-		section[key] = buf;
+		sec[key] = buf;
 	}
 
-	bool ParseBoolOr(std::string value, bool def)
+	void SetBool(Section& sec, const char* key, bool value)
 	{
-		if (value.empty())
-			return def;
-
-		std::transform(value.begin(), value.end(), value.begin(),
-			[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-		return value == "1" || value == "true" || value == "yes" || value == "on";
-	}
-
-	void SetBool(mINI::INIMap<std::string>& section, const char* key, bool value)
-	{
-		section[key] = value ? "true" : "false";
+		// Matches inipp's own extract<bool>, which parses with
+		// std::boolalpha -- i.e. it accepts "true"/"false" text, not
+		// "1"/"0".
+		sec[key] = value ? "true" : "false";
 	}
 }
 
-namespace Config
+namespace
 {
-	void Reload()
+	// Actual work, split out from Config::Reload() below so it can run on
+	// a dedicated worker thread (see Reload()) instead of directly on
+	// whatever thread/fiber called in.
+	void ReloadImpl()
 	{
-		mINI::INIFile file(ResolveIniPath());
-		mINI::INIStructure ini;
-		file.read(ini); // fine if the file doesn't exist yet -- ini just stays empty
+		inipp::Ini<char> ini;
+		{
+			std::ifstream is(ResolveIniPath()); // MSVC extension: ifstream accepts a wide filename directly
+			if (is)
+				ini.parse(is);
+			// fine if the file doesn't exist yet (is fails to open) --
+			// ini.sections just stays empty, every value below falls
+			// back to its compiled-in default.
+		}
 
-		Values defaults;
-		auto& general = ini["General"];
-		auto& hud = ini["HUD"];
+		Config::Values defaults;
+		auto& general = ini.sections["General"];
+		auto& hud = ini.sections["HUD"];
 
-		g_values.ShowCommunityCards = ParseBoolOr(general["ShowCommunityCards"], defaults.ShowCommunityCards);
-		g_values.ShowOthersCards = ParseBoolOr(general["ShowOthersCards"], defaults.ShowOthersCards);
-		g_values.ShowWinPrediction = ParseBoolOr(general["ShowWinPrediction"], defaults.ShowWinPrediction);
+		g_values.ShowCommunityCards = GetOr(general, "ShowCommunityCards", defaults.ShowCommunityCards);
+		g_values.ShowOthersCards = GetOr(general, "ShowOthersCards", defaults.ShowOthersCards);
+		g_values.ShowWinPrediction = GetOr(general, "ShowWinPrediction", defaults.ShowWinPrediction);
 
-		g_values.PanelX = ParseFloatOr(hud["PanelX"], defaults.PanelX);
-		g_values.PanelY = ParseFloatOr(hud["PanelY"], defaults.PanelY);
-		g_values.TextScale = ParseFloatOr(hud["TextScale"], defaults.TextScale);
-		g_values.TitleTextScale = ParseFloatOr(hud["TitleTextScale"], defaults.TitleTextScale);
+		g_values.PanelX = GetOr(hud, "PanelX", defaults.PanelX);
+		g_values.PanelY = GetOr(hud, "PanelY", defaults.PanelY);
+		g_values.TextScale = GetOr(hud, "TextScale", defaults.TextScale);
+		g_values.TitleTextScale = GetOr(hud, "TitleTextScale", defaults.TitleTextScale);
 
 		// Write the resolved values (file's own, or the default that was
-		// just substituted for anything missing) back in one shot.
-		// file.write() does a "lazy" write: preserves existing formatting/
-		// comments and only touches keys that are new or changed, and
-		// generates a fresh file if none exists yet -- either way, one
-		// real file write, not up to 9 like the old per-key Win32 version.
+		// just substituted for anything missing) back into the in-memory
+		// structure, then generate() the whole file fresh in one write
+		// below. Unlike mINI, inipp has no "lazy" partial-file-update
+		// mode that preserves untouched formatting -- generate() always
+		// writes the full structure -- which is fine here since we don't
+		// rely on preserving any custom comments/formatting, and
+		// `sections`/`ini.parse()` already carried forward whatever the
+		// user had actually set.
 		SetBool(general, "ShowCommunityCards", g_values.ShowCommunityCards);
 		SetBool(general, "ShowOthersCards", g_values.ShowOthersCards);
 		SetBool(general, "ShowWinPrediction", g_values.ShowWinPrediction);
@@ -112,12 +131,12 @@ namespace Config
 		// Card2DIconBaseX etc. Release never reads or writes this
 		// section at all, so a Release-built PokerCheat.ini simply won't
 		// have a [CommunityCardIcons2D] section.
-		auto& icons = ini["CommunityCardIcons2D"];
-		g_values.Card2DIconBaseX = ParseFloatOr(icons["BaseX"], defaults.Card2DIconBaseX);
-		g_values.Card2DIconY = ParseFloatOr(icons["Y"], defaults.Card2DIconY);
-		g_values.Card2DIconSpacingX = ParseFloatOr(icons["SpacingX"], defaults.Card2DIconSpacingX);
-		g_values.Card2DIconWidth = ParseFloatOr(icons["Width"], defaults.Card2DIconWidth);
-		g_values.Card2DIconHeight = ParseFloatOr(icons["Height"], defaults.Card2DIconHeight);
+		auto& icons = ini.sections["CommunityCardIcons2D"];
+		g_values.Card2DIconBaseX = GetOr(icons, "BaseX", defaults.Card2DIconBaseX);
+		g_values.Card2DIconY = GetOr(icons, "Y", defaults.Card2DIconY);
+		g_values.Card2DIconSpacingX = GetOr(icons, "SpacingX", defaults.Card2DIconSpacingX);
+		g_values.Card2DIconWidth = GetOr(icons, "Width", defaults.Card2DIconWidth);
+		g_values.Card2DIconHeight = GetOr(icons, "Height", defaults.Card2DIconHeight);
 
 		SetFloat(icons, "BaseX", g_values.Card2DIconBaseX);
 		SetFloat(icons, "Y", g_values.Card2DIconY);
@@ -126,12 +145,51 @@ namespace Config
 		SetFloat(icons, "Height", g_values.Card2DIconHeight);
 #endif
 
-		file.write(ini, true);
+		{
+			std::ofstream os(ResolveIniPath(), std::ios::trunc);
+			if (os)
+				ini.generate(os);
+			else
+				Log::Write("Config::Reload -- failed to open %ls for writing", ResolveIniPath().c_str());
+		}
+
+		Log::Write("Config::Reload -- loaded from %ls (ShowCommunityCards=%d ShowOthersCards=%d ShowWinPrediction=%d PanelX=%.4f PanelY=%.4f)",
+			ResolveIniPath().c_str(), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction,
+			g_values.PanelX, g_values.PanelY);
+	}
+}
+
+namespace Config
+{
+	void Reload()
+	{
+		// Plain synchronous call -- no worker thread. The worker thread
+		// (see docs/JOURNAL.md) existed specifically to get <filesystem>'s
+		// stack-heavy locale/codecvt machinery off ScriptHookRDR2's small
+		// fiber stack; inipp doesn't touch <filesystem> at all (plain
+		// std::getline/std::map/std::basic_istringstream, all shallow,
+		// unremarkable stack usage), so that whole concern no longer
+		// applies. Threading also meant real complexity that's no longer
+		// earning its keep: a worker-thread stack size to pick, a mutex
+		// to serialize overlapping reloads, atomics with explicit
+		// acquire/release ordering to publish results safely across
+		// threads. None of that is needed once this runs to completion
+		// on the calling thread/fiber before returning, same as any
+		// ordinary function call.
+		try
+		{
+			ReloadImpl();
+		}
+		catch (const std::exception& e)
+		{
+			Log::Write("Config::Reload -- std::exception: %s -- keeping previous config values", e.what());
+		}
+		catch (...)
+		{
+			Log::Write("Config::Reload -- unknown non-std exception -- keeping previous config values");
+		}
 
 		g_loaded = true;
-		Log::Write("Config::Reload -- loaded from %s (ShowCommunityCards=%d ShowOthersCards=%d ShowWinPrediction=%d PanelX=%.4f PanelY=%.4f)",
-			ResolveIniPath(), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction,
-			g_values.PanelX, g_values.PanelY);
 	}
 
 	const Values& Get()

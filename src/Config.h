@@ -9,14 +9,28 @@
 	PokerCheat.ini while the game is running, hit the menu item, see the
 	new values immediately.
 
-	Backed by mINI (external/mINI, vendored as a git submodule --
-	https://github.com/metayeti/mINI), not the raw Win32
-	GetPrivateProfileString/WritePrivateProfileString API this started
-	on: that API rewrites/rescans the whole file on every single key
-	access and caches writes without a guaranteed immediate flush to
-	disk, which was the real cause of a hitch (and an INI that didn't
-	reliably appear on disk) the first time the HUD was toggled on. mINI
-	reads and writes the whole file in one shot instead.
+	Backed by inipp (external/inipp, vendored as a git submodule --
+	https://github.com/mcmtroffaes/inipp), the second library tried here.
+	The first, mINI, was reverted after multiple real crashes traced back
+	to its <filesystem> dependency (a stack overflow when its heavy
+	locale/codecvt machinery ran on ScriptHookRDR2's small fiber stack,
+	and separately a crash inside its own std::unordered_map lookup) --
+	see docs/JOURNAL.md for the full chase. inipp parses/generates over
+	plain std::istream/std::ostream (no <filesystem>, no exceptions
+	thrown anywhere in its header, std::map instead of
+	std::unordered_map), and this file opens the actual file itself via
+	MSVC's wide-char ifstream/ofstream constructor overloads -- avoiding
+	the narrow/wide conversion issue entirely rather than working around
+	it.
+
+	Reload() is a plain synchronous call, same as any ordinary function --
+	no worker thread. An earlier version of this file (while still on
+	mINI) ran the actual load on a dedicated worker thread specifically
+	to get <filesystem>'s stack-heavy machinery off ScriptHookRDR2's
+	small fiber stack; inipp doesn't touch <filesystem> at all, so that
+	concern doesn't apply here and the threading complexity (worker
+	stack size, a mutex to serialize overlapping reloads, atomics for
+	safe cross-thread publish) was removed along with it.
 */
 
 #pragma once
@@ -56,14 +70,14 @@ namespace Config
 #endif
 	};
 
-	// Returns the current config, loading it from PokerCheat.ini (next to
-	// the .asi) on first call. Any key missing from the file falls back
-	// to Values{}'s default and gets written back, so the file is
-	// self-documenting -- a fresh PokerCheat.ini appears with every
-	// tunable spelled out the first time the mod runs.
+	// Returns the current config, triggering the very first load
+	// automatically on first call (blocking, like any ordinary function
+	// call -- see Reload()).
 	const Values& Get();
 
 	// Re-reads PokerCheat.ini from disk, replacing the cached values.
-	// Wired to the F10 menu's "Reload Config" item.
+	// Wired to the F10 menu's "Reload Config" item; also called once,
+	// eagerly, from DllMain (see main.cpp) so the file exists as soon as
+	// the ASI is injected.
 	void Reload();
 }

@@ -40,7 +40,7 @@
     <ClInclude Include="external\RDR-Classes\script\scrNativeHandler.hpp" />
     <ClInclude Include="external\RDR-Classes\rage\atArray.hpp" />
     <ClInclude Include="external\RDR-Classes\rage\joaat.hpp" />
-    <ClInclude Include="external\mINI\src\mini\ini.h" />
+    <ClInclude Include="external\inipp\inipp\inipp.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{07307CD6-7B32-4222-8D75-26E935AB20DB}</ProjectGuid>

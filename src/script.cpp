@@ -39,6 +39,8 @@ void ScriptMain()
 {
 	Log::Write("PokerCheat started");
 
+	// Config is loaded from DllMain now, not here -- see main.cpp.
+
 	BuildMenu();
 
 	while (true)
