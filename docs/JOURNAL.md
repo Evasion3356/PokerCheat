@@ -1883,3 +1883,49 @@ Both configs build and deploy clean (game closed for both). Not yet
 re-tested in-game against this specific simplification, but low risk
 given inipp's confirmed-safe call sites are unchanged -- only the
 threading wrapper around them was removed.
+
+### The toggle lag came back -- different cause this time, PatternScan's naive scan
+
+User confirmed inipp/non-threaded config works, but reported the
+"Toggle Poker Cheat" hitch again. With Config now loaded eagerly at
+injection (long before any toggle press), it couldn't be the same
+cause as the original hitch -- traced it fresh instead of assuming.
+
+Real cause: `PatternScan::FindInMainModule()` (`PatternScan.cpp`) did a
+naive brute-force scan -- for every byte offset in RDR2.exe's entire
+mapped image (100+ MB), an inner-loop comparison against the pattern,
+no skip optimization at all. Its result is cached (a function-local
+`static` in `GamePointers::GetScriptThreads()`), but the cache only
+gets populated on the *first* call -- and the only caller,
+`GamePointers::FindScriptThread()`, is only ever reached from
+`DrawOverlay()`, which only runs once `PokerCheat::Enabled` is true --
+i.e. only after the first "Toggle Poker Cheat" press. So that first
+toggle each session was exactly when this expensive, uncached scan ran
+for the first time. This has been here since Session 2 -- not a
+regression from anything done this session, just never isolated as
+*the* cause before because Config's issues were coincident with it.
+
+Two-part fix:
+- Rewrote `FindInMainModule()` to anchor on the pattern's first
+  non-wildcard byte and use `memchr` (CRT, typically SIMD-backed) to
+  jump straight to each candidate occurrence of it, only running the
+  full per-byte pattern comparison at those candidates -- instead of
+  testing every single byte offset by hand. Caught and fixed a real
+  bug in this rewrite before deploying it: naively starting the search
+  at the image's very first byte could let `memchr` find an anchor
+  close enough to the start that `candidateStart` (`anchor -
+  firstConcrete`) pointed before the image, an out-of-bounds read --
+  fixed by starting the search at `base + firstConcrete` instead of
+  `base`.
+- Added `GamePointers::GetScriptThreads();` to `main.cpp`'s `DllMain`
+  (right after `Config::Reload()`), forcing the scan to run once at
+  injection instead of lazily on the first toggle. Safe to do from
+  `DllMain` specifically because it's pure computation over
+  already-resident memory: no file I/O, no thread creation, nothing
+  loader-lock-sensitive -- RDR2.exe's own image is guaranteed fully
+  mapped by the time any DllMain in the process runs at all, since the
+  OS maps the whole primary executable before processing any DLL's
+  imports or entry point.
+
+Both configs build and deploy clean (game closed for both). Not yet
+re-tested in-game.

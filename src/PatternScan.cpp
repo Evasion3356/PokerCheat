@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <vector>
 #include <string>
+#include <cstring>
 
 namespace
 {
@@ -65,12 +66,60 @@ namespace PatternScan
 		if (imageSize < patternLen)
 			return std::nullopt;
 
-		for (std::size_t offset = 0; offset <= imageSize - patternLen; offset++)
+		// Anchor on the first non-wildcard byte and use memchr (a
+		// well-optimized, typically SIMD-backed CRT routine) to jump
+		// straight to each candidate occurrence of it, instead of
+		// testing every single byte offset in the image by hand. The
+		// original version here did a naive brute-force scan -- for
+		// every one of a ~100MB+ game executable's byte offsets, an
+		// inner-loop comparison -- which turned out to be the real
+		// cause of a one-time hitch on the first "Toggle Poker Cheat"
+		// press each session (this function's result is cached, but the
+		// cache only gets populated on that first call). Every
+		// signature used in this project so far starts with a concrete
+		// byte (not a wildcard), so this covers the real case; an
+		// all-wildcard pattern is handled as a degenerate no-match below
+		// rather than falling back to a slow scan.
+		std::size_t firstConcrete = 0;
+		while (firstConcrete < patternLen && !parsed.mask[firstConcrete])
+			firstConcrete++;
+
+		if (firstConcrete == patternLen)
 		{
+			// Pattern is all wildcards -- degenerate, nothing to anchor
+			// on. Not expected in practice; just report no match rather
+			// than doing anything meaningless.
+			return std::nullopt;
+		}
+
+		// Start searching at base+firstConcrete, not base -- candidateStart
+		// (below) is computed as candidateAnchor - firstConcrete, so
+		// starting any earlier could let memchr find an anchor byte
+		// close enough to the very start of the image that
+		// candidateStart would point before base, reading out of bounds.
+		std::uint8_t* searchStart = base + firstConcrete;
+		std::size_t remaining = imageSize - firstConcrete;
+
+		for (;;)
+		{
+			// Only the region that could still contain a full match
+			// (patternLen - firstConcrete bytes after the anchor) needs
+			// to be searched for the anchor byte.
+			if (remaining < patternLen - firstConcrete)
+				break;
+
+			std::size_t searchableForAnchor = remaining - (patternLen - firstConcrete - 1);
+			void* found = memchr(searchStart, parsed.bytes[firstConcrete], searchableForAnchor);
+			if (!found)
+				break;
+
+			std::uint8_t* candidateAnchor = static_cast<std::uint8_t*>(found);
+			std::uint8_t* candidateStart = candidateAnchor - firstConcrete;
+
 			bool matched = true;
 			for (std::size_t j = 0; j < patternLen; j++)
 			{
-				if (parsed.mask[j] && base[offset + j] != parsed.bytes[j])
+				if (parsed.mask[j] && candidateStart[j] != parsed.bytes[j])
 				{
 					matched = false;
 					break;
@@ -78,7 +127,12 @@ namespace PatternScan
 			}
 
 			if (matched)
-				return reinterpret_cast<std::uintptr_t>(base + offset);
+				return reinterpret_cast<std::uintptr_t>(candidateStart);
+
+			// Advance past this anchor candidate and keep scanning.
+			std::size_t advanced = static_cast<std::size_t>(candidateAnchor - searchStart) + 1;
+			searchStart += advanced;
+			remaining -= advanced;
 		}
 
 		return std::nullopt;

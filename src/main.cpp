@@ -8,6 +8,7 @@
 #include "script.h"
 #include "keyboard.h"
 #include "Config.h"
+#include "GamePointers.h"
 
 BOOL APIENTRY DllMain(HMODULE hInstance, DWORD reason, LPVOID lpReserved)
 {
@@ -24,6 +25,25 @@ BOOL APIENTRY DllMain(HMODULE hInstance, DWORD reason, LPVOID lpReserved)
 		// ordinary file I/O via inipp, nothing that touches
 		// LoadLibrary/FreeLibrary or otherwise risks the loader lock.
 		Config::Reload();
+
+		// Eagerly resolve the live scrThread pool (an AOB scan over
+		// RDR2.exe's whole mapped image, cached afterward -- see
+		// GamePointers.cpp/PatternScan.cpp) here too, instead of letting
+		// it happen lazily on whatever tick first calls
+		// GamePointers::FindScriptThread(). That lazy path meant the
+		// scan's one-time cost landed on the first "Toggle Poker Cheat"
+		// press each session (DrawOverlay() -- the only caller -- only
+		// ever runs once Enabled is true), which is exactly what showed
+		// up as a hitch there. Safe to do here: RDR2.exe's own image is
+		// already fully mapped by the time ANY DllMain in this process
+		// runs (the OS maps the whole primary executable before
+		// processing DLL imports/entry points at all), this only reads
+		// already-resident memory (no file I/O, no thread creation,
+		// nothing loader-lock-sensitive), and after PatternScan.cpp's
+		// memchr-based rewrite it's fast enough not to meaningfully
+		// delay injection.
+		GamePointers::GetScriptThreads();
+
 		scriptRegister(hInstance, ScriptMain);
 		keyboardHandlerRegister(OnKeyboardMessage);
 		break;
