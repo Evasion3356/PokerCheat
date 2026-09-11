@@ -1031,6 +1031,20 @@ namespace PokerCheat
 			// that's actually confirmed correct (it's what makes the seat
 			// icons/labels disappear on time), so mirror it exactly here
 			// rather than trusting mySeat's cards to mean the same thing.
+			//
+			// ALSO requires isActive (state == 0 || 2), matching the exact
+			// gate the per-seat icon draw uses below -- a second live
+			// report showed the board/(You Win) status STILL surviving
+			// between hands even with the card-validity check above, while
+			// the opponent icons themselves were correctly hidden. Root
+			// cause: a seat that folded during the previous hand keeps
+			// BOTH its stale hole cards AND its "folded" state (1) in
+			// memory until the next deal, so it fails the icon draw's
+			// isActive gate (correctly hidden) but was still passing this
+			// loop's card-only check (incorrectly counted as "hand in
+			// progress"). Checking isActive here too means this loop now
+			// counts a seat only when it would ALSO actually draw that
+			// seat's icon -- the same litmus test, not just a similar one.
 			bool handInProgress = false;
 			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
@@ -1040,6 +1054,10 @@ namespace PokerCheat
 				std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
 				if (ReadInt(thread, seatBase + 0) == -1)
 					continue; // unoccupied seat
+
+				std::int32_t state = ReadInt(thread, seatBase + 6);
+				if (state != 0 && state != 2)
+					continue; // folded/inactive -- see comment above
 
 				std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
 				std::int32_t c0Rank = ReadInt(thread, cardsBase + 0);
