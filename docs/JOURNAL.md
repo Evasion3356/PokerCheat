@@ -1929,3 +1929,145 @@ Two-part fix:
 
 Both configs build and deploy clean (game closed for both). Not yet
 re-tested in-game.
+
+## Session 11: opponent seat card icons, a real RDR2 font, win-prediction moved off the panel, and a long dead-end chase for "between hands"
+
+### Opponent hole-card icons next to their name on the real HUD
+
+User wanted opponents' hole cards drawn as real card-face icons next to
+their name on the vanilla HUD, same idea as the community-card strip but
+per-seat. Seat-to-screen mapping had to be derived from scratch again:
+the vanilla per-seat panel turned out to be a single **vertical list at
+the bottom-left corner**, reading bottom-to-top, not a table-fan layout --
+confirmed by the user reading real pixel offsets off their own screen
+(2560x1440). Two real bugs found and fixed via live user reports before
+the direction/spacing was right:
+- First guess (`(seat - mySeat + 6) % 6`) had the rotation direction
+  backwards -- a live 4-seat report (mySeat=5 at the bottom row, then
+  seat 4, seat 3, seat 2 going up) showed the list actually counts
+  **down** from your own seat number, `(mySeat - seat + 6) % 6`. Matches
+  an idiom the game's own script already uses for turn order
+  (`(f_9 + 5) % 6` for "the seat before mine", poker_sp.ysc.c ~line
+  5858).
+- Using the raw relative offset directly left gaps when the table wasn't
+  fully occupied (the real panel compacts, an empty seat doesn't reserve
+  a blank row). Fixed by computing a DENSE row index instead --
+  `ComputeDenseRowForSeat()`, shared between the actual drawing code and
+  a new `ProbeSeatOccupancy()` diagnostic so the two can never drift out
+  of sync.
+- Folded opponents' cards were still being drawn (real cards are still in
+  memory after a fold, same reason the debug panel's own `[FOLDED]` line
+  still lists them) -- gated the icon draw on `isActive` (seat state
+  0/active or 2/all-in only) per user report.
+
+Position/spacing calibrated via the usual live Reload Config loop; final
+values baked in as both `Config.h` defaults and the Release constexpr
+fallback (`SeatCardIconBaseX/Y`, `StepY`, `SpacingX`, `Width`, `Height`,
+plus `LabelOffsetX/Y` for the win-label position added later).
+
+### A real RDR2 font -- three wrong guesses, then the actual answer from real source
+
+User asked for a `(You Win)`/`(They Win)` label under each opponent's
+cards, "in the RDR font, not this boring debug font." Investigated
+whether that's even possible:
+- Confirmed (three independent native databases, checked twice) that
+  `UI::DRAW_TEXT`'s legacy text path has exactly one font available to
+  script -- no `SET_TEXT_FONT` native exists anywhere in the real,
+  current RDR3 native DB.
+- First attempt: `COLOR_STRING` text-template type + hand-guessed real
+  font names (`"TisaOffc"`, later real names like `"RDR Lino"` pulled
+  from IDA strings in Rampage Trainer's binary) as a `<FONT FACE=...>`
+  tag. Built a live `DrawFontTest()` diagnostic (F10 menu) to test
+  side-by-side -- every variant looked identical. Root cause found by
+  grepping every real `COLOR_STRING` call site in the actual game
+  scripts: it's a narrow, fixed 4-argument template (`VAR_STRING(42,
+  "COLOR_STRING", _CREATE_COLOR_STRING(colorVal), text)`), not a general
+  HTML/tag parser -- our 3-argument calls were malformed for that
+  template from the start.
+- Real answer came from inspecting an actual working open-source trainer
+  (github.com/Halen84/RDR2-Native-Menu-Base, user-supplied). Its
+  `Drawing.cpp` revealed the actual bug: `UI::DRAW_TEXT` (hash
+  `0xD79334A4BB99BAD1`) and `UI::SET_TEXT_COLOR_RGBA` (hash
+  `0x50A41AD966910F03`) are BOTH documented in that project's own
+  natives.h as nullsub/no-ops since game build 1436 -- our build
+  (1491.50) is long past that. The confirmed working replacement for any
+  build newer than 1311 is `UIDEBUG::_BG_DISPLAY_TEXT` /
+  `_BG_SET_TEXT_COLOR` (added to `ExtraNatives.h`, the stock SDK doesn't
+  declare that namespace at all), still called via
+  `GAMEPLAY::CREATE_STRING(10, "LITERAL_STRING", ...)` (that part was
+  always right). Real tag syntax confirmed from their own
+  `DrawFormattedText()`: `<TEXTFORMAT RIGHTMARGIN='0'><P
+  ALIGN='Left'><FONT FACE='$token' LETTERSPACING='0'
+  SIZE='N'>~s~TEXT</FONT></P><TEXTFORMAT>`. Font tokens themselves
+  (`$title`, `$Font5`, etc., not real display names) cross-confirmed
+  against github.com/ExpMero/rdr2_fonts, which hosts the actual
+  extracted `.ttf` files named `<index>_$<token>_<Real Name>.ttf`.
+  User confirmed `$Font5` ("Redemption") renders visibly differently
+  once the right native pair was used -- first real font win of the
+  project. Now used for both the per-opponent win/lose label and the
+  standalone win-prediction status below.
+
+### ShowWinPrediction moved off the panel entirely
+
+Originally just another line in the debug text panel. User wanted it
+fully independent: own-seat card icons/label (added mid-session, mirrored
+off the opponent-row code) were removed again after actually seeing them
+in play -- redundant, since the player already sees their own hand.
+`ShowWinPrediction` now drives a dedicated `DrawWinPredictionStatus()`,
+same real-font pipeline as the opponent labels, positioned independently
+via `Config`'s `WinPredictionX/Y` (a rough screen-center starting point,
+not calibrated) instead of living in the panel's line sequence.
+
+### The "between hands" chase -- five dead ends, then abandoned for a plain rule
+
+Long-running bug: card icons/board kept showing stale data between hands
+instead of hiding like the vanilla HUD does. Chased a "round-phase state"
+field through poker_sp's memory across most of the session; every
+candidate was a real, traceable field that turned out NOT to answer the
+actual question:
+- `f_114.f_2010` -- looked like a real phase state from static analysis
+  (0 = idle, matched two independent code paths), but empirically stayed
+  constant the whole session.
+- `f_1.f_42` -- user's own find, a real switch in `func_3`
+  (`poker_sp.ysc.c:4918`). Traced it to the OUTER activity-lifecycle
+  state machine (init -> waiting -> running -> cleanup), not per-hand --
+  confirmed by the user: stays at one value (6) the entire session.
+- `f_114.f_2011` -- user's second find. Traced a real dispatcher
+  (`poker_sp.ysc.c:8151`: `f_2015[f_2010](...)`) showing `f_2011` is
+  **phase-relative**, indexed by whichever of 14 separate handler
+  functions `f_2010` currently selects -- same raw number means
+  something different depending on context, which is why it "looked very
+  inconsistent" to the user. Mapped the user's own live-observed sequence
+  (0->13->94) to `func_286` exactly (the pre-seated/setup handler), and
+  found the real payout sequence in the largest handler, `func_296`
+  (cases 86-91). User set an empirical threshold (`f_2011` in [16, 70) =
+  in progress) and wired it in for live testing -- abandoned after
+  observing a brief invalid/glitch value during a real transition.
+- `f_1.f_3.f_2` -- another switch the user found; traced its `func_102`/
+  `func_103` targets to real in-game world coordinates (e.g. `2626.75,
+  -1219.20, 52.25`) -- a table/location selector, not round state.
+- `func_665` (checked while investigating `func_296`'s payout exit
+  condition) turned out to just be a live count of non-folded active
+  seats, not a pot-size getter as hoped.
+- `Global_1360165[essParam0]` -- a switch the user found elsewhere;
+  turned out to be the game's shared 1157-slot "essential ped" pool,
+  referenced by 400+ scripts across the entire game (ped spawn/setup
+  lifecycle), completely unrelated to poker at all.
+
+User's call: stop hunting for a native state flag. `handInProgress`
+reverted to a plain `constexpr bool = true` -- draw whenever `poker_sp`
+is running, same rule the mod had before this whole detour. Removed the
+now-dead diagnostic debug line and the state-reading code from the draw
+path; the underlying slot constants and two new diagnostics
+(`ProbeSeatOccupancy`, `DumpLocalStackRange` -- the latter logs the
+script-local stack's absolute address range for pasting straight into
+Cheat Engine) are left in place in case this gets picked up again later.
+
+### Also fixed
+
+A `PokerCheat.ini` typo (`StepY=-0.9` instead of `-0.09`) was pushing
+every opponent row past the first off the top of the screen entirely --
+only one card set was ever visible. Found by just reading the file.
+
+All changes build clean in both configs; user testing throughout, not a
+cold handoff.

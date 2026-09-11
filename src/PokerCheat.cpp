@@ -75,6 +75,7 @@ namespace PokerCheat
 {
 	bool Enabled = false;
 	bool CalibrationGridEnabled = false;
+	bool FontTestEnabled = false;
 
 	void Toggle()
 	{
@@ -86,6 +87,12 @@ namespace PokerCheat
 	{
 		CalibrationGridEnabled = !CalibrationGridEnabled;
 		Log::Write("PokerCheat::ToggleCalibrationGrid -> %s", CalibrationGridEnabled ? "ON" : "OFF");
+	}
+
+	void ToggleFontTest()
+	{
+		FontTestEnabled = !FontTestEnabled;
+		Log::Write("PokerCheat::ToggleFontTest -> %s", FontTestEnabled ? "ON" : "OFF");
 	}
 
 	// ------------------------------------------------------------------
@@ -100,6 +107,60 @@ namespace PokerCheat
 	constexpr std::uint32_t kTableSlotB = kLocalStructIndex + kFieldOffsetF114 + kFieldOffsetTableB;
 
 	constexpr std::uint32_t kF114SeatIndexSlot = kLocalStructIndex + kFieldOffsetF114 + 9; // uLocal_14.f_114.f_9 (local player's seat)
+
+	// uLocal_14.f_114.f_2010 -- poker_sp's own round-phase state machine,
+	// set exclusively through func_213 (which also stamps f_2011, a
+	// sub-step, and resets a timer at f_2012). Traced two independent
+	// pieces of evidence for what 0 means: func_1502's per-seat "who to
+	// highlight" switch (poker_sp.ysc.c line ~37697) treats every state
+	// it doesn't explicitly list (its `default` case) as "highlight
+	// nobody" -- 0 isn't one of its explicit cases (1-11 are) -- and the
+	// ONLY call site that sets f_2010 back to 0 (line ~13269, inside a
+	// state-85 step of a separate per-seat animation-step machine) does
+	// so specifically once every seated player's own "reacting to the
+	// last hand" animation (func_799) has finished. Both point the same
+	// way: 0 is the idle/between-hands state, after the previous hand's
+	// resolution has fully played out and before the next deal begins --
+	// exactly the window the user reported still seeing stale card icons
+	// in. Non-zero (1 upward) covers the actual deal/betting/showdown
+	// steps. Not independently confirmed against a live memory read yet
+	// (see docs/JOURNAL.md if this needs re-deriving).
+	constexpr std::uint32_t kF114HandStateSlot = kLocalStructIndex + kFieldOffsetF114 + 2010;
+
+	// uLocal_14.f_1.f_42 -- user-suggested alternate candidate for the
+	// round-phase state (f_1 is the same generic framework struct
+	// kFrameworkHashSlot already reads f_1.f_39 from, base offset
+	// kLocalStructIndex+1 -- see that constant). f_42 doesn't turn up
+	// directly in poker_sp.ysc.c itself (searched; no `.f_42`/`->f_42`
+	// hits), which fits it living in the shared act_gen_poker.ysc.c
+	// framework layer instead, same as f_39 -- not yet traced there.
+	// Logged alongside kF114HandStateSlot in both the on-screen debug
+	// line and ProbeTableStruct so the two candidates can be directly
+	// compared against a real between-hands window rather than swapped
+	// in blind a third time.
+	constexpr std::uint32_t kF1StateSlot = kLocalStructIndex + 1 + 42;
+
+	// uLocal_14.f_114.f_2011 -- the SUB-STEP field func_213 always sets
+	// alongside f_2010 (same call, same function -- see kF114HandStateSlot's
+	// header comment), but which this file had the address for and never
+	// actually read. User traced a real, active callback (func_286,
+	// registered via func_287(uParam0, 1, &func_286) inside func_101,
+	// confirmed to receive uLocal_14 itself when invoked -- its own field
+	// usage, f_9/f_3310/f_4583/f_1, all match uLocal_14's top-level fields
+	// exactly, and its case 94 calls func_213(&(uParam0->f_114), 3, 0),
+	// i.e. it's a real f_2010/f_2011-owning state machine) that switches on
+	// exactly this field: case 0 -> sets f_2011=13, case 13 -> sets
+	// f_2011=94, case 94 -> transitions f_2010 to 3 once a condition
+	// clears. A genuinely active sub-step machine, unlike the other two
+	// candidates (both confirmed dead ends -- constant for the whole
+	// session). Logged alongside them for direct comparison.
+	constexpr std::uint32_t kF114SubStepSlot = kLocalStructIndex + kFieldOffsetF114 + 2011;
+
+	// Raw read of uLocal_14 itself (slot kLocalStructIndex, no nested
+	// field offset at all) -- whatever the very first word of the whole
+	// local struct holds. Not tied to any specific traced meaning; added
+	// purely as a cheap, broad diagnostic alongside the real candidates.
+	constexpr std::uint32_t kLocalRawSlot = kLocalStructIndex;
 
 	constexpr std::uint32_t kBoardHeaderOffset = 15;              // Table.f_15 header (board array size, confirmed = 11)
 	constexpr std::uint32_t kBoardSlot = kTableSlot + kBoardHeaderOffset;
@@ -200,6 +261,7 @@ namespace PokerCheat
 			// the 8-byte slot, so truncating a pointer-sized read is correct.
 			return static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(raw));
 		}
+
 
 		const char* RankName(std::int32_t rank)
 		{
@@ -406,6 +468,169 @@ namespace PokerCheat
 			}
 		}
 
+		// Opponent hole-card icons, one pair per occupied opponent seat
+		// (relOffset 1+ -- see DrawOverlay()'s call site; per user
+		// request this is opponents only, never your own seat, since you
+		// can already see your own cards) -- same 2D calibrated-strip
+		// technique as DrawCommunityCardIcons() above, since the per-seat
+		// name/stack panel is Scaleform/
+		// DATABINDING-driven (func_214/func_470 in the ground-truth
+		// decompile bind seat data by RAW seat index, no coordinate
+		// involved) and has no readable screen position, exactly like the
+		// top-right community-card strip before it was calibrated.
+		//
+		// Indexed by RELATIVE seat offset -- (mySeat - seat + 6) % 6, so
+		// 0 is always you -- not raw seat index. Confirmed necessary, not
+		// just convenient: docs/JOURNAL.md records "seat index changes
+		// every hand -- user sits randomly", yet the user always sees
+		// themselves in the same on-screen spot ("bottom"). Since the
+		// script binds seat data by raw index unrotated, that only works
+		// if the Scaleform movie itself re-arranges panels relative to
+		// whichever seat is the local player's -- so the panel positions
+		// this file calibrates against must be relative-offset positions
+		// too, not per-raw-seat ones.
+		//
+		// Direction confirmed via a live 4-seat report: mySeat=5 (bottom
+		// row), then going UP the vertical list: seat 4, seat 3, seat 2 --
+		// i.e. the list counts DOWN from your own seat number (wrapping
+		// mod 6) as it goes up the screen, matching (mySeat - seat), not
+		// (seat - mySeat) as this file originally guessed. Also matches
+		// an idiom the game's own script already uses elsewhere for turn
+		// order: `(uLocal_14.f_114.f_9 + 5) % 6`, i.e. `(mySeat - 1) % 6`,
+		// for "the seat before mine" (poker_sp.ysc.c line ~5858).
+		//
+		// Calibrated via live Reload Config tuning (see Config.h's
+		// SeatCardIconBaseX/Y/StepY header comment for the pixel-derived
+		// starting estimate this was tuned from).
+		constexpr int kSeatCardIconCount = 2;
+
+#ifndef _DEBUG
+		constexpr float kReleaseSeatCardIconBaseX = 0.18f;
+		constexpr float kReleaseSeatCardIconBaseY = 0.83f;
+		constexpr float kReleaseSeatCardIconStepY = -0.09f;
+		constexpr float kReleaseSeatCardIconSpacingX = 0.02f;
+		constexpr float kReleaseSeatCardIconWidth = 0.02f;
+		constexpr float kReleaseSeatCardIconHeight = 0.045f;
+		constexpr float kReleaseSeatCardIconLabelOffsetX = -0.01f;
+		constexpr float kReleaseSeatCardIconLabelOffsetY = -0.02f;
+#endif
+
+		// relOffset must be 1+ (one dense row per occupied opponent seat,
+		// see the header comment above) -- 0 would be your own seat-list
+		// row but is never actually called with this file's own drawing
+		// logic. Row position is a base (relOffset==1, the first opponent
+		// row above you) plus (relOffset-1) steps -- not a per-row lookup
+		// table, since every row shares the same X and steps by the same
+		// Y. vsMeResult: 1 = you win, -1 = they win, 0 = tie, 2 = no
+		// comparison available (e.g. opponent inactive/folded, or you
+		// have no hand) -- suppresses the label entirely.
+		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult)
+		{
+			char cardSetDict[32];
+			if (!FindLoadedCardSetDict(cardSetDict, sizeof(cardSetDict)))
+			{
+				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
+				return;
+			}
+
+#ifdef _DEBUG
+			const Config::Values& cfg = Config::Get();
+			float baseX = cfg.SeatCardIconBaseX;
+			float baseY = cfg.SeatCardIconBaseY;
+			float stepY = cfg.SeatCardIconStepY;
+			float spacingX = cfg.SeatCardIconSpacingX;
+			float width = cfg.SeatCardIconWidth;
+			float height = cfg.SeatCardIconHeight;
+			float labelOffsetX = cfg.SeatCardIconLabelOffsetX;
+			float labelOffsetY = cfg.SeatCardIconLabelOffsetY;
+#else
+			float baseX = kReleaseSeatCardIconBaseX;
+			float baseY = kReleaseSeatCardIconBaseY;
+			float stepY = kReleaseSeatCardIconStepY;
+			float spacingX = kReleaseSeatCardIconSpacingX;
+			float width = kReleaseSeatCardIconWidth;
+			float height = kReleaseSeatCardIconHeight;
+			float labelOffsetX = kReleaseSeatCardIconLabelOffsetX;
+			float labelOffsetY = kReleaseSeatCardIconLabelOffsetY;
+#endif
+
+			float x = baseX;
+			float y = baseY + static_cast<float>(relOffset - 1) * stepY;
+
+			const std::int32_t ranks[kSeatCardIconCount] = { rank0, rank1 };
+			const std::int32_t suits[kSeatCardIconCount] = { suit0, suit1 };
+			for (int i = 0; i < kSeatCardIconCount; i++)
+			{
+				if (ranks[i] < 2)
+					continue;
+
+				char textureName[32];
+				BuildCardTextureName(ranks[i], suits[i], textureName, sizeof(textureName));
+
+				GRAPHICS::DRAW_SPRITE(cardSetDict, textureName, x + static_cast<float>(i) * spacingX, y, width, height, 0.0f, 255, 255, 255, 255, 0);
+			}
+
+			// (You Win)/(They Win)/(Tie) label directly below the icons,
+			// in a REAL RDR2 font -- $Font5 ("Redemption"), confirmed
+			// working by the user via DrawFontTest() row 8/9 (see that
+			// function's header comment for the full derivation: the
+			// plain UI::DRAW_TEXT/SET_TEXT_COLOR_RGBA natives this file
+			// uses everywhere else turned out to be nullsub on our build,
+			// UIDEBUG::_BG_DISPLAY_TEXT/_BG_SET_TEXT_COLOR -- added to
+			// ExtraNatives.h -- is the working replacement, and rich text
+			// tags embedded in a LITERAL_STRING through THAT pipeline
+			// actually get parsed). No SET_TEXT_CENTRE equivalent exists
+			// for this pipeline -- alignment comes from the <P ALIGN=...>
+			// tag inside the string itself, so this is left-aligned
+			// starting at the icon pair's left edge rather than centered.
+			if (Config::Get().ShowWouldWinHandAgainst && vsMeResult != 2)
+			{
+				const char* label = (vsMeResult > 0) ? "(You Win)" : (vsMeResult < 0) ? "(They Win)" : "(Tie)";
+				int labelR = (vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 255 : 255;
+				int labelG = (vsMeResult > 0) ? 255 : (vsMeResult < 0) ? 110 : 230;
+				int labelB = (vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 110 : 140;
+
+				float labelX = x + labelOffsetX;
+				float labelY = y + height + labelOffsetY;
+
+				char formatText[192];
+				sprintf_s(formatText, "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='30'>~s~%s</FONT></P><TEXTFORMAT>", label);
+
+				UIDEBUG::_BG_SET_TEXT_COLOR(labelR, labelG, labelB, 255);
+				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), formatText), labelX, labelY);
+			}
+		}
+
+		// Standalone "are you predicted to win" status -- deliberately
+		// separate from both the seat card icons (which now only ever
+		// show opponents, per user request) and the text panel. Same
+		// real-font ($Font5) UIDEBUG pipeline as DrawSeatCardIcons()'s
+		// label, positioned independently via Config's WinPredictionX/Y
+		// (a rough screen-center starting point, "for now" per the user --
+		// not calibrated against anything). Reuses the exact win/lose/tie
+		// wording style already established for the opponent labels
+		// rather than the old panel verdict's full sentences, so the two
+		// read consistently; "not in this hand" simply shows nothing,
+		// same as an opponent row with no comparison available.
+		void DrawWinPredictionStatus(bool haveMyHand, bool anyOpponent, int worstResult)
+		{
+			if (!haveMyHand)
+				return;
+
+			int result = !anyOpponent ? 1 : (worstResult > 0 ? 1 : worstResult == 0 ? 0 : -1);
+			const char* label = (result > 0) ? "(You Win)" : (result < 0) ? "(They Win)" : "(Tie)";
+			int r = (result > 0) ? 140 : (result < 0) ? 255 : 255;
+			int g = (result > 0) ? 255 : (result < 0) ? 110 : 230;
+			int b = (result > 0) ? 140 : (result < 0) ? 110 : 140;
+
+			const Config::Values& cfg = Config::Get();
+			char formatText[192];
+			sprintf_s(formatText, "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='40'>~s~%s</FONT></P><TEXTFORMAT>", label);
+
+			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), formatText), cfg.WinPredictionX, cfg.WinPredictionY);
+		}
+
 		// Checked three independent native databases (the stock SDK's
 		// natives.h, rdr3-nativedb-data/natives.json, and the decompiler's
 		// own bundled natives_rdr.json) for a SET_TEXT_FONT equivalent --
@@ -503,6 +728,137 @@ namespace PokerCheat
 			}
 		}
 
+		// See PokerCheat.h's ToggleFontTest() header comment. Every other
+		// line this mod draws uses GAMEPLAY::CREATE_STRING(10,
+		// "LITERAL_STRING", text) -- flags=10, template type
+		// "LITERAL_STRING".
+		//
+		// V1 of this test (COLOR_STRING + a guessed real font name like
+		// "TisaOffc") showed no visible difference on any row -- wrong on
+		// two counts, now corrected from real evidence: the user pulled
+		// actual string constants straight out of Rampage Trainer's
+		// binary (IDA, .rdata section), which really does draw RDR-style
+		// text. Those strings prove two things our guess got wrong:
+		//   - The FONT FACE value isn't a real font name at all -- it's a
+		//     SYMBOLIC TOKEN ($title1, $Font2, $Font5 all appear) that
+		//     presumably resolves against whatever font library is
+		//     already loaded for the current UI context, not a literal
+		//     font name like our old "TisaOffc" guess.
+		//   - Several of the strings are prefixed with `~s~` immediately
+		//     before the `<FONT FACE=` tag (e.g. `~s~<FONT FACE={0}>...`,
+		//     `{0}` being Rampage's OWN format-string placeholder, not
+		//     anything RDR2-native) -- classic Rockstar tilde-tag syntax,
+		//     possibly what actually switches the string into
+		//     tag-parsing mode, independent of (or instead of) the
+		//     COLOR_STRING template type this file guessed at before.
+		// Also confirmed: UI::DRAW_TEXT in our own SDK is hash
+		// 0xD79334A4BB99BAD1 -- the exact same native the forum called
+		// "_DISPLAY_TEXT", so this file was already calling the right
+		// native; nothing to change there.
+		//
+		// V2: tried the REAL display names ("RDR Lino", "RDR Gothica",
+		// etc., pulled from a second binary dump) directly as the FACE
+		// value -- also showed no visible difference on any row.
+		//
+		// V3: github.com/ExpMero/rdr2_fonts (user-supplied link) hosts the
+		// actual extracted .ttf files, each named `<index>_$<token>_<Real
+		// Name>.ttf` (e.g. `16_$title1_RDR Lino.ttf`), confirming the
+		// token<->real-name mapping -- but retesting those tokens through
+		// the SAME native pipeline as V1/V2 still showed no difference on
+		// any row.
+		//
+		// V4 (this version) is the actual fix, found by inspecting a real
+		// open-source menu base (github.com/Halen84/RDR2-Native-Menu-Base,
+		// user-supplied link) that genuinely does render RDR-style fonts.
+		// Its src/NativeMenuBase/UI/Drawing.cpp revealed the real problem:
+		// this file has been calling the WRONG GENERATION of native this
+		// whole time. UI::DRAW_TEXT (hash 0xD79334A4BB99BAD1) and
+		// UI::SET_TEXT_COLOR_RGBA (hash 0x50A41AD966910F03, natives.h:4750)
+		// are both documented in that project's own natives.h, in comments
+		// directly above those exact hashes, as nullsub/no-ops since game
+		// build 1436 -- our build (1491.50) is long past that. Their
+		// replacement (confirmed as what that project's own shipped,
+		// working code actually calls for any build newer than 1311,
+		// their BUILD_1311_COMPATIBLE flag defaults to 0) is
+		// UIDEBUG::_BG_DISPLAY_TEXT / UIDEBUG::_BG_SET_TEXT_COLOR -- added
+		// to ExtraNatives.h since the stock SDK doesn't declare the
+		// UIDEBUG namespace at all. Their DrawFormattedText() builds
+		// (paraphrased, see ExtraNatives.h and that project's source for
+		// the exact original):
+		//   <TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'>
+		//     <FONT FACE='$token' LETTERSPACING='0' SIZE='30'>~s~TEXT</FONT>
+		//   </P><TEXTFORMAT>
+		// still via GAMEPLAY::CREATE_STRING(10, "LITERAL_STRING", ...) --
+		// LITERAL_STRING was always the right template; COLOR_STRING
+		// (V1/V2's guess) was never it. Testing plain text through the
+		// new native pair first (row 2, no tags) to confirm the pair
+		// itself works before judging whether the FONT tag does too, then
+		// the tokens most likely to look obviously different if this
+		// works at all.
+		void DrawFontTest()
+		{
+			struct Row { const char* label; const char* content; bool useBgNative; };
+			constexpr Row kRows[] = {
+				{ "1) OLD pipeline baseline:", "The quick brown fox", false },
+				{ "2) NEW pipeline, no tags:", "The quick brown fox", true },
+				{ "3) NEW, FONT $title:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$title' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
+				{ "4) NEW, FONT $chalk:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$chalk' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
+				{ "5) NEW, FONT $ledger:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$ledger' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
+				{ "6) NEW, FONT $body1:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$body1' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
+				{ "7) NEW, FONT $catalog1:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$catalog1' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
+				{ "8) NEW, FONT $Font5:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
+				{ "9) NEW, FONT $gamername:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$gamername' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
+			};
+			constexpr int kRowCount = sizeof(kRows) / sizeof(kRows[0]);
+			constexpr float kFontTestX = 0.30f;
+			constexpr float kFontTestLabelWidth = 0.27f;
+			constexpr float kFontTestY = 0.18f;
+			constexpr float kFontTestLineHeight = 0.045f;
+			constexpr float kFontTestPanelPadding = 0.012f;
+
+			DrawPanel(kFontTestX - kFontTestPanelPadding, kFontTestY - kFontTestPanelPadding,
+				0.55f + kFontTestPanelPadding * 2.0f,
+				static_cast<float>(kRowCount + 1) * kFontTestLineHeight + kFontTestPanelPadding * 2.0f);
+
+			UI::SET_TEXT_SCALE(0.0f, 0.32f);
+			UI::SET_TEXT_COLOR_RGBA(kTitleR, kTitleG, kTitleB, kTitleA);
+			UI::SET_TEXT_CENTRE(0);
+			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+			UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>("Font Test -- report which rows look different")), kFontTestX, kFontTestY);
+
+			float y = kFontTestY + kFontTestLineHeight;
+			for (int i = 0; i < kRowCount; i++)
+			{
+				UI::SET_TEXT_SCALE(0.0f, 0.26f);
+				UI::SET_TEXT_COLOR_RGBA(kTextR, kTextG, kTextB, kTextA);
+				UI::SET_TEXT_CENTRE(0);
+				UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(kRows[i].label)), kFontTestX, y);
+
+				if (kRows[i].useBgNative)
+				{
+					// New pipeline -- no SET_TEXT_SCALE/CENTRE/DROPSHADOW
+					// equivalent called here, matching Halen84's own
+					// DrawFormattedText() exactly (only _BG_SET_TEXT_COLOR
+					// before _BG_DISPLAY_TEXT -- size/alignment come from
+					// the TEXTFORMAT/FONT tag attributes baked into the
+					// content string itself, not a separate native call).
+					UIDEBUG::_BG_SET_TEXT_COLOR(140, 220, 255, 255);
+					UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(kRows[i].content)), kFontTestX + kFontTestLabelWidth, y);
+				}
+				else
+				{
+					UI::SET_TEXT_SCALE(0.0f, 0.30f);
+					UI::SET_TEXT_COLOR_RGBA(140, 220, 255, 255);
+					UI::SET_TEXT_CENTRE(0);
+					UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+					UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(kRows[i].content)), kFontTestX + kFontTestLabelWidth, y);
+				}
+
+				y += kFontTestLineHeight;
+			}
+		}
+
 		constexpr std::size_t kHandEvalBufWords = 64;
 
 		// Hand-scoring/comparison logic lives in its own header
@@ -568,6 +924,42 @@ namespace PokerCheat
 			outBuf[23] = 5; // force "5 valid board cards" -- predicted-final board
 		}
 
+		// Maps each OTHER (non-you) seat to a DENSE row index (1, 2, 3...
+		// with no gaps) for DrawSeatCardIcons() -- walks the table in the
+		// confirmed direction (decreasing raw seat number from mySeat,
+		// wrapping mod 6 -- see DrawSeatCardIcons()'s header comment) but
+		// SKIPS unoccupied seats entirely rather than giving them a
+		// reserved row, since the real vanilla panel list compacts (an
+		// empty seat doesn't leave a blank row -- see the user report this
+		// was built to match). outDenseRow must have kSeatCount entries;
+		// entries stay 0 for mySeat itself and for any seat with no row
+		// (occupiedMarker == -1). Pulled out of DrawOverlay() into its own
+		// function specifically so ProbeSeatOccupancy() (the diagnostic
+		// this backs) reads the EXACT same logic the actual icon drawing
+		// uses, instead of a hand-copied duplicate that could quietly
+		// drift out of sync with what's really on screen.
+		void ComputeDenseRowForSeat(rage::scrThread* thread, std::int32_t mySeat, int (&outDenseRow)[kSeatCount])
+		{
+			for (std::uint32_t i = 0; i < kSeatCount; i++)
+				outDenseRow[i] = 0;
+
+			if (mySeat < 0 || mySeat >= static_cast<std::int32_t>(kSeatCount))
+				return;
+
+			int nextRow = 1;
+			for (int rawOffset = 1; rawOffset < static_cast<int>(kSeatCount); rawOffset++)
+			{
+				int otherSeat = (mySeat - rawOffset + static_cast<int>(kSeatCount)) % static_cast<int>(kSeatCount);
+				std::uint32_t otherSeatBase = kSeatsDataBase + static_cast<std::uint32_t>(otherSeat) * kSeatStride;
+				std::int32_t otherOccupiedMarker = ReadInt(thread, otherSeatBase + 0);
+				if (otherOccupiedMarker != -1)
+				{
+					outDenseRow[otherSeat] = nextRow;
+					nextRow++;
+				}
+			}
+		}
+
 		void DrawOverlay()
 		{
 			auto thread = GamePointers::FindScriptThread(rage::Joaat("poker_sp"));
@@ -579,6 +971,18 @@ namespace PokerCheat
 				return;
 
 			std::int32_t mySeat = ReadInt(thread, kF114SeatIndexSlot);
+
+			// Between-hands suppression via poker_sp's internal state
+			// fields (f_2010, f_2011, f_1.f_42, raw uLocal_14) is
+			// abandoned -- four different candidates tried, none held up
+			// under live testing (constant all session, phase-relative
+			// with no single global threshold, or briefly reading an
+			// invalid number mid-transition). Back to the simple rule:
+			// draw whenever poker_sp is running at all (the early-return
+			// FindScriptThread/GetScriptLocalAddress checks above this
+			// point already gate that). See docs/JOURNAL.md for the full
+			// dead-end trail if this needs revisiting.
+			constexpr bool handInProgress = true;
 
 			// Read once up front, reused for the predicted board, the
 			// "Upcoming" line, and the real "Board" line below.
@@ -684,7 +1088,7 @@ namespace PokerCheat
 			HandScore myHandScore;
 			std::int32_t myCategory = -1;
 			bool haveMyHand = false;
-			if (mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
+			if (handInProgress && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
 			{
 				std::uint32_t myBase = kSeatsDataBase + static_cast<std::uint32_t>(mySeat) * kSeatStride;
 				std::uint32_t myCardsBase = myBase + kHoleCardsDataOffset;
@@ -707,6 +1111,11 @@ namespace PokerCheat
 			// one), -1 = losing to at least one opponent.
 			int worstResult = 1;
 			bool anyOpponent = false;
+
+			// 0 means "you, or no seat maps here" -- see
+			// ComputeDenseRowForSeat()'s header comment.
+			int denseRowForSeat[kSeatCount];
+			ComputeDenseRowForSeat(thread, mySeat, denseRowForSeat);
 
 			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
@@ -743,7 +1152,7 @@ namespace PokerCheat
 				char line[192];
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 
-				if (card0Rank < 2 || card1Rank < 2)
+				if (!handInProgress || card0Rank < 2 || card1Rank < 2)
 				{
 					sprintf_s(line, "Seat %u: --- (stack %d, bet %d)%s", seat, stack, bet, stateLabel);
 				}
@@ -751,6 +1160,7 @@ namespace PokerCheat
 				{
 					std::int32_t category = -1;
 					const char* vsMe = "";
+					int vsMeResult = 2; // 2 = no comparison available -- see DrawSeatCardIcons()'s header comment
 
 					// Hand evaluation/comparison always runs regardless of
 					// display settings below -- the final verdict line
@@ -775,6 +1185,7 @@ namespace PokerCheat
 								anyOpponent = true;
 								int cmp = CompareHands(myHandScore, oppScore); // >0 I win, <0 they win, 0 tie
 								vsMe = (cmp > 0) ? " [you win]" : (cmp < 0) ? " [they win]" : " [tie]";
+								vsMeResult = (cmp > 0) ? 1 : (cmp < 0) ? -1 : 0;
 								if (cmp < 0)
 									worstResult = -1;
 								else if (cmp == 0 && worstResult > 0)
@@ -804,6 +1215,28 @@ namespace PokerCheat
 							category >= 0 ? HandCategoryName(category) : "?",
 							stack, bet, stateLabel, shownVsMe,
 							isMe ? "  (You)" : "");
+
+						// Icons next to the opponent's own name/panel on
+						// the REAL vanilla HUD -- see DrawSeatCardIcons()'s
+						// header comment for the relative-seat-offset
+						// mapping and its still-uncalibrated status. Uses
+						// the DENSE row computed above (denseRowForSeat),
+						// not the raw seat-number offset directly, so an
+						// unoccupied seat doesn't leave a gap in the list.
+						// vsMeResult carries the (You Win)/(They Win)/(Tie)
+						// comparison down into the icon draw itself. Gated
+						// on isActive -- a folded seat's real cards are
+						// still in memory (same reason the text panel's own
+						// "[FOLDED]" line still lists them), but per user
+						// report the icon overlay shouldn't keep revealing
+						// a folded opponent's cards once they're out of
+						// the pot.
+						if (!isMe && isActive)
+						{
+							int denseRow = denseRowForSeat[seat];
+							if (denseRow != 0)
+								DrawSeatCardIcons(denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult);
+						}
 					}
 				}
 
@@ -826,8 +1259,11 @@ namespace PokerCheat
 			// vs. predicted. Gated by ShowCommunityCards -- both the text
 			// line and the 2D icon strip; boardRanks/boardSuits (used for
 			// hand evaluation above) are computed unconditionally either
-			// way.
-			if (Config::Get().ShowCommunityCards)
+			// way. Also gated by handInProgress -- between hands the
+			// board slots can still hold the previous hand's stale data
+			// (see handInProgress's header comment above), and the
+			// vanilla HUD itself hides during that window too.
+			if (Config::Get().ShowCommunityCards && handInProgress)
 			{
 				char boardLine[192] = "Board: ";
 				std::int32_t deckIdx = deckCursor;
@@ -899,26 +1335,15 @@ namespace PokerCheat
 			// kTableSlotB) and confirmed via ProbeTableStruct: Candidate B
 			// now logs cursor=8, count=52 mid-hand, a sane live deck --
 			// see docs/JOURNAL.md. Verdict wording restored to confident.
+			// Standalone center-screen status -- NOT part of the seat
+			// list/text panel at all (per user request: opponents only
+			// get card icons + win/lose labels near their own cards; your
+			// own predicted result is a separate, independent readout).
 			// Gated by ShowWinPrediction -- worstResult/anyOpponent above
-			// are still always computed (needed regardless so the
-			// per-seat comparison flows through correctly), only the
-			// display is conditional.
-			if (Config::Get().ShowWinPrediction)
-			{
-				const char* verdict;
-				if (!haveMyHand)
-					verdict = "You're not in this hand";
-				else if (!anyOpponent)
-					verdict = "You will win (no other active hands)";
-				else if (worstResult > 0)
-					verdict = "Predicted to WIN at showdown";
-				else if (worstResult == 0)
-					verdict = "Predicted to CHOP the pot at showdown";
-				else
-					verdict = "Predicted to LOSE at showdown";
-
-				DrawLine(x, y, verdict);
-			}
+			// are still always computed regardless (needed so the
+			// per-seat comparison flows through correctly either way).
+			if (handInProgress && Config::Get().ShowWinPrediction)
+				DrawWinPredictionStatus(haveMyHand, anyOpponent, worstResult);
 		}
 	}
 
@@ -926,6 +1351,9 @@ namespace PokerCheat
 	{
 		if (CalibrationGridEnabled)
 			DrawCalibrationGrid();
+
+		if (FontTestEnabled)
+			DrawFontTest();
 
 		if (!Enabled)
 			return;
@@ -971,6 +1399,13 @@ namespace PokerCheat
 
 		std::int32_t seatIndex = ReadInt(thread, kF114SeatIndexSlot);
 		Log::Write("ProbeTableStruct: uLocal_14.f_114.f_9 (your seat) = %d", seatIndex);
+
+		std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
+		std::int32_t f1State = ReadInt(thread, kF1StateSlot);
+		std::int32_t subStep = ReadInt(thread, kF114SubStepSlot);
+		std::int32_t localRaw = ReadInt(thread, kLocalRawSlot);
+		Log::Write("ProbeTableStruct: round-phase candidates -- uLocal_14.f_114.f_2010 = %d, uLocal_14.f_1.f_42 = %d, uLocal_14.f_114.f_2011 = %d, uLocal_14 (raw) = %d",
+			handState, f1State, subStep, localRaw);
 
 		std::int32_t boardHeader = ReadInt(thread, kBoardSlot);
 		std::int32_t revealCount = ReadInt(thread, kBoardSlot + 23);
@@ -1044,6 +1479,89 @@ namespace PokerCheat
 		{
 			std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(static_cast<std::int32_t>(kDeckSlot) + off));
 			Log::Write("  deckraw[%+d] (slot %d) = %d", off, static_cast<std::int32_t>(kDeckSlot) + off, value);
+		}
+	}
+
+	// Logs poker_sp's script-local stack's absolute address range so it
+	// can be pasted into Cheat Engine directly, for live/visual memory
+	// analysis (watching values change in real time, "find what writes
+	// to this address", etc.) instead of only ever probing one guessed
+	// offset at a time through this mod's own F10 tools. Same addressing
+	// GamePointers::ReadScriptLocal/GetScriptLocalAddress already use --
+	// thread->m_Stack is the base, m_Context.m_StackSize is the slot
+	// count, 8 bytes/slot -- so end = base + m_StackSize*8. Also logs
+	// uLocal_14's own absolute address within that range (slot
+	// kLocalStructIndex), as a landmark for locating it by eye once
+	// browsing the dumped range live.
+	void DumpLocalStackRange()
+	{
+		auto thread = GamePointers::FindScriptThread(rage::Joaat("poker_sp"));
+		if (!thread)
+		{
+			Log::Write("DumpLocalStackRange: poker_sp is not currently running");
+			return;
+		}
+
+		auto base = reinterpret_cast<std::uintptr_t>(thread->m_Stack);
+		std::uint32_t stackSizeSlots = thread->m_Context.m_StackSize;
+		std::uintptr_t end = base + static_cast<std::uintptr_t>(stackSizeSlots) * 8u;
+		std::uintptr_t localBase = base + static_cast<std::uintptr_t>(kLocalStructIndex) * 8u;
+
+		Log::Write("DumpLocalStackRange: start=0x%llX end=0x%llX (size=%u slots, %llu bytes)",
+			static_cast<unsigned long long>(base), static_cast<unsigned long long>(end),
+			stackSizeSlots, static_cast<unsigned long long>(end - base));
+		Log::Write("DumpLocalStackRange: uLocal_14 (slot %u) starts at 0x%llX",
+			kLocalStructIndex, static_cast<unsigned long long>(localBase));
+	}
+
+	// Built to debug a live report of the seat card icons drawing extra/
+	// duplicate sets when only a handful of seats are actually occupied.
+	// Dumps everything DrawOverlay()'s per-seat loop and
+	// ComputeDenseRowForSeat() (the exact function the real drawing uses,
+	// not a re-implementation of it -- see that function's header
+	// comment) actually see for each of the 6 seats, so a wrong dense-row
+	// assignment or an unexpectedly-non-(-1) occupancy marker shows up
+	// directly instead of being inferred from the on-screen symptom.
+	// Wired to the F10 menu's "Probe Seat Occupancy" item.
+	void ProbeSeatOccupancy()
+	{
+		auto thread = GamePointers::FindScriptThread(rage::Joaat("poker_sp"));
+		if (!thread)
+		{
+			Log::Write("ProbeSeatOccupancy: poker_sp is not currently running");
+			return;
+		}
+
+		std::int32_t mySeat = ReadInt(thread, kF114SeatIndexSlot);
+		std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
+		std::int32_t f1State = ReadInt(thread, kF1StateSlot);
+		std::int32_t subStep = ReadInt(thread, kF114SubStepSlot);
+		std::int32_t localRaw = ReadInt(thread, kLocalRawSlot);
+		Log::Write("ProbeSeatOccupancy: mySeat=%d, f_114.f_2010=%d, f_1.f_42=%d, f_114.f_2011=%d, uLocal_14 (raw)=%d", mySeat, handState, f1State, subStep, localRaw);
+
+		int denseRow[kSeatCount];
+		ComputeDenseRowForSeat(thread, mySeat, denseRow);
+
+		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
+		{
+			std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
+			std::int32_t occupiedMarker = ReadInt(thread, seatBase + 0);
+			std::int32_t state = ReadInt(thread, seatBase + 6);
+			std::int32_t stack = ReadInt(thread, seatBase + 2);
+			std::int32_t bet = ReadInt(thread, seatBase + 3);
+
+			std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
+			std::int32_t card0Rank = ReadInt(thread, cardsBase + 0);
+			std::int32_t card0Suit = ReadInt(thread, cardsBase + 1);
+			std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
+			std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
+			bool cardsValid = (card0Rank >= 2 && card1Rank >= 2);
+
+			Log::Write("  seat %u: occupiedMarker=%d state=%d stack=%d bet=%d cards={%d,%d}/{%d,%d} (valid=%s) denseRow=%d%s",
+				seat, occupiedMarker, state, stack, bet,
+				card0Rank, card0Suit, card1Rank, card1Suit, cardsValid ? "yes" : "no",
+				denseRow[seat],
+				(static_cast<std::int32_t>(seat) == mySeat) ? "  <-- YOUR SEAT" : "");
 		}
 	}
 

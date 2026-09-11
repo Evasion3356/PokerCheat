@@ -23,6 +23,20 @@ namespace PokerCheat
 	// author to see the screen. See docs/JOURNAL.md.
 	void ToggleCalibrationGrid();
 
+	// Diagnostic: draws a handful of comparison text lines testing
+	// whether RDR2's "COLOR_STRING" text-template type (as opposed to
+	// "LITERAL_STRING", which every other line this mod draws uses) and
+	// embedded Scaleform-style HTML tags (<FONT FACE=...>, <B>, etc.)
+	// actually render differently -- i.e. whether a real RDR2 font/style
+	// is reachable from GAMEPLAY::CREATE_STRING at all, as opposed to
+	// LITERAL_STRING's single fixed font every other line in this file is
+	// stuck with. See docs/JOURNAL.md for the research trail (forum
+	// reports only, nothing independently confirmed working yet -- this
+	// is what actually settles it). Wired to the F10 menu's "Toggle Font
+	// Test" item -- draws regardless of Enabled/poker state, same as the
+	// calibration grid, so it can be checked anywhere in-game.
+	void ToggleFontTest();
+
 	// Called every ScriptMain tick regardless of Enabled state (Enabled is
 	// checked internally) -- same convention as CollectorOffline's
 	// MetalDetector::Update(). Draws the HUD when Enabled and poker_sp is
@@ -35,6 +49,29 @@ namespace PokerCheat
 	// the F10 menu's "Probe Table Struct" item -- useful for re-verifying
 	// the struct layout if a game update shifts it.
 	void ProbeTableStruct();
+
+	// Diagnostic: logs poker_sp's script-local stack's start/end absolute
+	// addresses (thread->m_Stack, and +m_StackSize*8 for the end -- same
+	// 8-bytes-per-slot addressing GamePointers::ReadScriptLocal uses),
+	// plus uLocal_14's own absolute address within that range -- meant to
+	// be pasted straight into Cheat Engine (Memory View's "Browse Memory"
+	// jump-to-address, or a manually-added address range) for live,
+	// visual memory analysis/scanning, instead of only being able to
+	// probe one guessed offset at a time through this mod's own F10
+	// tools. Wired to the F10 menu's "Dump Local Stack Range" item.
+	void DumpLocalStackRange();
+
+	// Diagnostic: dumps, for every seat (0-5), everything the seat card
+	// icon drawing logic (DrawSeatCardIcons(), fed by
+	// ComputeDenseRowForSeat()) actually decides based on -- raw occupancy
+	// marker, fold/all-in state, stack/bet, hole card rank/suit (and
+	// whether they read as valid), and the exact dense row it gets
+	// assigned. Built specifically to debug a live report of extra/
+	// duplicate card sets being drawn: this shows precisely which seats
+	// the drawing logic believes are occupied and why, instead of
+	// guessing from the symptom alone. Wired to the F10 menu's "Probe
+	// Seat Occupancy" item.
+	void ProbeSeatOccupancy();
 
 	// Diagnostic: tests whether poker_sp's own community-card reveal
 	// (func_471) creates a real 3D object per board slot whose handle we

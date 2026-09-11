@@ -27,9 +27,12 @@ namespace
 	{
 		g_mainMenu = new MenuBase(new MenuItemTitle("PokerCheat"));
 		g_mainMenu->AddItem(new MenuItemAction("Toggle Poker Cheat (see log)", PokerCheat::Toggle));
+		g_mainMenu->AddItem(new MenuItemAction("Dump Local Stack Range (see log)", PokerCheat::DumpLocalStackRange));
 		g_mainMenu->AddItem(new MenuItemAction("Probe Table Struct (see log)", PokerCheat::ProbeTableStruct));
+		g_mainMenu->AddItem(new MenuItemAction("Probe Seat Occupancy (see log)", PokerCheat::ProbeSeatOccupancy));
 		g_mainMenu->AddItem(new MenuItemAction("Probe Community Card Objects (see log)", PokerCheat::ProbeCommunityCardObjects));
 		g_mainMenu->AddItem(new MenuItemAction("Toggle Calibration Grid", PokerCheat::ToggleCalibrationGrid));
+		g_mainMenu->AddItem(new MenuItemAction("Toggle Font Test", PokerCheat::ToggleFontTest));
 		g_mainMenu->AddItem(new MenuItemAction("Reload Config (see log)", Config::Reload));
 		g_menuController.RegisterMenu(g_mainMenu);
 	}

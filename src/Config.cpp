@@ -103,11 +103,14 @@ namespace
 		g_values.ShowCommunityCards = GetOr(general, "ShowCommunityCards", defaults.ShowCommunityCards);
 		g_values.ShowOthersCards = GetOr(general, "ShowOthersCards", defaults.ShowOthersCards);
 		g_values.ShowWinPrediction = GetOr(general, "ShowWinPrediction", defaults.ShowWinPrediction);
+		g_values.ShowWouldWinHandAgainst = GetOr(general, "ShowWouldWinHandAgainst", defaults.ShowWouldWinHandAgainst);
 
 		g_values.PanelX = GetOr(hud, "PanelX", defaults.PanelX);
 		g_values.PanelY = GetOr(hud, "PanelY", defaults.PanelY);
 		g_values.TextScale = GetOr(hud, "TextScale", defaults.TextScale);
 		g_values.TitleTextScale = GetOr(hud, "TitleTextScale", defaults.TitleTextScale);
+		g_values.WinPredictionX = GetOr(hud, "WinPredictionX", defaults.WinPredictionX);
+		g_values.WinPredictionY = GetOr(hud, "WinPredictionY", defaults.WinPredictionY);
 
 		// Write the resolved values (file's own, or the default that was
 		// just substituted for anything missing) back into the in-memory
@@ -121,10 +124,13 @@ namespace
 		SetBool(general, "ShowCommunityCards", g_values.ShowCommunityCards);
 		SetBool(general, "ShowOthersCards", g_values.ShowOthersCards);
 		SetBool(general, "ShowWinPrediction", g_values.ShowWinPrediction);
+		SetBool(general, "ShowWouldWinHandAgainst", g_values.ShowWouldWinHandAgainst);
 		SetFloat(hud, "PanelX", g_values.PanelX);
 		SetFloat(hud, "PanelY", g_values.PanelY);
 		SetFloat(hud, "TextScale", g_values.TextScale);
 		SetFloat(hud, "TitleTextScale", g_values.TitleTextScale);
+		SetFloat(hud, "WinPredictionX", g_values.WinPredictionX);
+		SetFloat(hud, "WinPredictionY", g_values.WinPredictionY);
 
 #ifdef _DEBUG
 		// Debug-only -- see Config.h's header comment on
@@ -143,6 +149,27 @@ namespace
 		SetFloat(icons, "SpacingX", g_values.Card2DIconSpacingX);
 		SetFloat(icons, "Width", g_values.Card2DIconWidth);
 		SetFloat(icons, "Height", g_values.Card2DIconHeight);
+
+		// Debug-only -- see Config.h's header comment on SeatCardIconBaseX
+		// etc. A base position (dense row 1 -- the first opponent row
+		// above you) plus a per-row Y step, not a per-row lookup table.
+		auto& seatIcons = ini.sections["SeatCardIcons2D"];
+		g_values.SeatCardIconBaseX = GetOr(seatIcons, "BaseX", defaults.SeatCardIconBaseX);
+		g_values.SeatCardIconBaseY = GetOr(seatIcons, "BaseY", defaults.SeatCardIconBaseY);
+		g_values.SeatCardIconStepY = GetOr(seatIcons, "StepY", defaults.SeatCardIconStepY);
+		g_values.SeatCardIconSpacingX = GetOr(seatIcons, "SpacingX", defaults.SeatCardIconSpacingX);
+		g_values.SeatCardIconWidth = GetOr(seatIcons, "Width", defaults.SeatCardIconWidth);
+		g_values.SeatCardIconHeight = GetOr(seatIcons, "Height", defaults.SeatCardIconHeight);
+		g_values.SeatCardIconLabelOffsetX = GetOr(seatIcons, "LabelOffsetX", defaults.SeatCardIconLabelOffsetX);
+		g_values.SeatCardIconLabelOffsetY = GetOr(seatIcons, "LabelOffsetY", defaults.SeatCardIconLabelOffsetY);
+		SetFloat(seatIcons, "BaseX", g_values.SeatCardIconBaseX);
+		SetFloat(seatIcons, "BaseY", g_values.SeatCardIconBaseY);
+		SetFloat(seatIcons, "StepY", g_values.SeatCardIconStepY);
+		SetFloat(seatIcons, "SpacingX", g_values.SeatCardIconSpacingX);
+		SetFloat(seatIcons, "Width", g_values.SeatCardIconWidth);
+		SetFloat(seatIcons, "Height", g_values.SeatCardIconHeight);
+		SetFloat(seatIcons, "LabelOffsetX", g_values.SeatCardIconLabelOffsetX);
+		SetFloat(seatIcons, "LabelOffsetY", g_values.SeatCardIconLabelOffsetY);
 #endif
 
 		{
