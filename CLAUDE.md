@@ -19,6 +19,45 @@ history, `docs/PITFALLS.md` for lessons carried over from
 `CollectorOffline`, and `src/PokerCheat.cpp`'s header comment for the
 current struct-layout/hand-eval design.
 
+## Coding conventions
+
+**No C-style casts, no C-style strings/buffers.** Every cast in this
+project's own code is `static_cast`/`reinterpret_cast`/`const_cast` --
+never a C-style `(Type)value` cast. No `char buf[N]` locals, `sprintf_s`,
+`strcpy_s`/`strcat_s`, or any other hand-rolled size-tracked buffer --
+`std::string`/`std::ostringstream` only for building text (see
+`BuildCardTextureName`/`FindLoadedCardSetDict`/`FormatFixed1` and the
+per-seat/board debug lines in `PokerCheat.cpp`, and `SetFloat`/
+`NarrowPath` in `Config.cpp`, for the established pattern). The one
+unavoidable exception is the literal call-site boundary into a
+ScriptHookRDR2 native that requires `char*` (e.g. `GRAPHICS::DRAW_SPRITE`,
+`TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED`, `GAMEPLAY::CREATE_STRING`) --
+build the value as `std::string` and pass
+`const_cast<char*>(str.c_str())` only at that call, never a manual
+fixed-size buffer upstream of it. Same convention `../BlackjackCheat`
+is converging on (see that project's own CLAUDE.md) -- don't reintroduce
+either pattern when porting code between the two.
+
+**Logging goes through spdlog, fmt-style, not printf-style.**
+`Log::Write` (`src/Log.h`) is a thin template wrapper around a
+file-backed `spdlog::logger` (see `external/spdlog`, header-only mode --
+`SPDLOG_HEADER_ONLY` is defined before including it, so there's no
+separate spdlog `.cpp` to add to the project). Call sites use fmt
+`{}`-style placeholders (`Log::Write("seat={} rank={}", seat, rank)`),
+not printf `%`-style (`Log::Write("seat=%u rank=%d", seat, rank)`) -- the
+old signature took `const char*, ...` and forwarded straight to
+`vfprintf`, so a mismatched `%s`/`%d` against the actual argument list
+was a real, silent runtime-UB risk (wrong type read off the `va_list`,
+or reading past the last supplied argument); `Log::Write`'s
+`spdlog::format_string_t<Args...>` parameter validates the placeholder
+count against `Args` at COMPILE time instead, so a mismatch is now a
+build error. A literal `{`/`}` in a log line's own text (not a
+placeholder) must be escaped as `{{`/`}}` -- see the `seat {} (base slot
+{}): card0={{rank={},suit={}}}...` style probe lines in
+`ProbeTableStruct`/`ProbeSeatOccupancy` for the pattern. Hex addresses
+use fmt's `{:#x}` (which supplies its own `0x` prefix) instead of a
+literal `"0x%llX"`; fixed-precision floats use `{:.Nf}`.
+
 ## Build & deploy
 
 ```
@@ -76,7 +115,10 @@ ScriptHookRDR2 SDK's own NativeTrainer sample).
 - `src/scriptmenu.h/.cpp`, `src/keyboard.h/.cpp` -- vendored unchanged from
   `CollectorOffline` (itself adapted from the ScriptHookRDR2 SDK's
   NativeTrainer sample).
-- `src/Log.h` -- minimal timestamped file logger (`PokerCheat.log`).
+- `src/Log.h` -- minimal timestamped file logger (`PokerCheat.log`),
+  backed by spdlog (`external/spdlog`, header-only) instead of a
+  hand-rolled `fopen_s`/`vfprintf` pair -- see Coding Conventions above
+  for the fmt `{}`-style call-site convention this requires.
 - `src/ExtraNatives.h` -- empty stub, same purpose as CollectorOffline's:
   reopen a native's namespace here (never edit the vendored SDK header)
   once a needed native turns out to be missing/mistyped in the stock

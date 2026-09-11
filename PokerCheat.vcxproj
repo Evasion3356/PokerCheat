@@ -50,6 +50,8 @@
     <ClInclude Include="external\RDR-Classes\rage\atArray.hpp" />
     <ClInclude Include="external\RDR-Classes\rage\joaat.hpp" />
     <ClInclude Include="external\inipp\inipp\inipp.h" />
+    <ClInclude Include="external\spdlog\include\spdlog\spdlog.h" />
+    <ClInclude Include="external\spdlog\include\spdlog\sinks\basic_file_sink.h" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{07307CD6-7B32-4222-8D75-26E935AB20DB}</ProjectGuid>
@@ -110,6 +112,16 @@
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FloatingPointModel>Fast</FloatingPointModel>
       <LanguageStandard>stdcpplatest</LanguageStandard>
+      <!-- spdlog's own headers include each other as "spdlog/..." (e.g.
+           spdlog.h includes "spdlog/common.h"), so its include ROOT
+           needs to be on the include path, unlike inipp/RDR-Classes,
+           whose headers are included by direct relative path with no
+           such internal cross-referencing. -->
+      <AdditionalIncludeDirectories>external\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <!-- Bundled fmt (pulled in via spdlog) static_asserts on this at
+           compile time otherwise: MSVC defaults to the current code
+           page for source/execution charset, not UTF-8. -->
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -139,6 +151,8 @@
       <FloatingPointModel>Fast</FloatingPointModel>
       <LanguageStandard>stdcpplatest</LanguageStandard>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+      <AdditionalIncludeDirectories>external\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

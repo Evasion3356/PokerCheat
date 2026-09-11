@@ -68,8 +68,9 @@
 #include "Config.h"
 #include "script.h"
 
-#include <cstdio>
-#include <cstring>
+#include <sstream>
+#include <iomanip>
+#include <string>
 
 namespace PokerCheat
 {
@@ -78,7 +79,7 @@ namespace PokerCheat
 	void Toggle()
 	{
 		Enabled = !Enabled;
-		Log::Write("PokerCheat::Toggle -> %s", Enabled ? "ON" : "OFF");
+		Log::Write("PokerCheat::Toggle -> {}", Enabled ? "ON" : "OFF");
 	}
 
 #ifdef _DEBUG
@@ -88,13 +89,13 @@ namespace PokerCheat
 	void ToggleCalibrationGrid()
 	{
 		CalibrationGridEnabled = !CalibrationGridEnabled;
-		Log::Write("PokerCheat::ToggleCalibrationGrid -> %s", CalibrationGridEnabled ? "ON" : "OFF");
+		Log::Write("PokerCheat::ToggleCalibrationGrid -> {}", CalibrationGridEnabled ? "ON" : "OFF");
 	}
 
 	void ToggleFontTest()
 	{
 		FontTestEnabled = !FontTestEnabled;
-		Log::Write("PokerCheat::ToggleFontTest -> %s", FontTestEnabled ? "ON" : "OFF");
+		Log::Write("PokerCheat::ToggleFontTest -> {}", FontTestEnabled ? "ON" : "OFF");
 	}
 #endif
 
@@ -340,7 +341,13 @@ namespace PokerCheat
 		// 3=Clubs -- confirmed correct via the TEST ICON (a real Ace of
 		// Hearts drawn for suit 0), and SuitLetter() now uses the same
 		// mapping.
-		void BuildCardTextureName(std::int32_t rank, std::int32_t suit, char* outName, std::size_t outSize)
+		// std::string, not a fixed char[]/sprintf_s -- no manual buffer
+		// size to get wrong. Reuses RankName() above instead of a second,
+		// duplicate rank-name switch (the original version of this
+		// function predated RankName() and never got consolidated with
+		// it); this is the same simplification BlackjackCheat.cpp's own
+		// ported copy of this function already made.
+		std::string BuildCardTextureName(std::int32_t rank, std::int32_t suit)
 		{
 			const char* suitName;
 			switch (suit)
@@ -352,26 +359,7 @@ namespace PokerCheat
 				default: suitName = ""; break;
 			}
 
-			const char* rankName;
-			switch (rank)
-			{
-				case 2: rankName = "2"; break;
-				case 3: rankName = "3"; break;
-				case 4: rankName = "4"; break;
-				case 5: rankName = "5"; break;
-				case 6: rankName = "6"; break;
-				case 7: rankName = "7"; break;
-				case 8: rankName = "8"; break;
-				case 9: rankName = "9"; break;
-				case 10: rankName = "10"; break;
-				case 11: rankName = "J"; break;
-				case 12: rankName = "Q"; break;
-				case 13: rankName = "K"; break;
-				case 14: rankName = "A"; break;
-				default: rankName = ""; break;
-			}
-
-			sprintf_s(outName, outSize, "%s%s", suitName, rankName);
+			return std::string(suitName) + RankName(rank);
 		}
 
 		// The real card_set_N number depends on which table/location skin
@@ -385,15 +373,14 @@ namespace PokerCheat
 		constexpr int kCardSetProbeLo = 1;
 		constexpr int kCardSetProbeHi = 8;
 
-		bool FindLoadedCardSetDict(char* outDict, std::size_t outSize)
+		bool FindLoadedCardSetDict(std::string& outDict)
 		{
 			for (int n = kCardSetProbeLo; n <= kCardSetProbeHi; n++)
 			{
-				char candidate[32];
-				sprintf_s(candidate, "card_set_%d", n);
-				if (TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED(candidate))
+				std::string candidate = "card_set_" + std::to_string(n);
+				if (TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(candidate.c_str())))
 				{
-					strcpy_s(outDict, outSize, candidate);
+					outDict = candidate;
 					return true;
 				}
 			}
@@ -433,8 +420,8 @@ namespace PokerCheat
 		// than re-reading memory itself.
 		void DrawCommunityCardIcons(const std::int32_t* ranks, const std::int32_t* suits, std::int32_t revealCount)
 		{
-			char cardSetDict[32];
-			if (!FindLoadedCardSetDict(cardSetDict, sizeof(cardSetDict)))
+			std::string cardSetDict;
+			if (!FindLoadedCardSetDict(cardSetDict))
 			{
 				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
 				return;
@@ -460,14 +447,13 @@ namespace PokerCheat
 				if (ranks[i] < 2)
 					continue;
 
-				char textureName[32];
-				BuildCardTextureName(ranks[i], suits[i], textureName, sizeof(textureName));
+				std::string textureName = BuildCardTextureName(ranks[i], suits[i]);
 
 				bool predicted = i >= revealCount;
 				int alpha = predicted ? kCard2DPredictedAlpha : 255;
 				float x = baseX + static_cast<float>(i) * spacingX;
 
-				GRAPHICS::DRAW_SPRITE(cardSetDict, textureName, x, iconY, width, height, 0.0f, 255, 255, 255, alpha, 0);
+				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.c_str()), const_cast<char*>(textureName.c_str()), x, iconY, width, height, 0.0f, 255, 255, 255, alpha, 0);
 			}
 		}
 
@@ -529,8 +515,8 @@ namespace PokerCheat
 		// have no hand) -- suppresses the label entirely.
 		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult)
 		{
-			char cardSetDict[32];
-			if (!FindLoadedCardSetDict(cardSetDict, sizeof(cardSetDict)))
+			std::string cardSetDict;
+			if (!FindLoadedCardSetDict(cardSetDict))
 			{
 				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
 				return;
@@ -567,10 +553,9 @@ namespace PokerCheat
 				if (ranks[i] < 2)
 					continue;
 
-				char textureName[32];
-				BuildCardTextureName(ranks[i], suits[i], textureName, sizeof(textureName));
+				std::string textureName = BuildCardTextureName(ranks[i], suits[i]);
 
-				GRAPHICS::DRAW_SPRITE(cardSetDict, textureName, x + static_cast<float>(i) * spacingX, y, width, height, 0.0f, 255, 255, 255, 255, 0);
+				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.c_str()), const_cast<char*>(textureName.c_str()), x + static_cast<float>(i) * spacingX, y, width, height, 0.0f, 255, 255, 255, 255, 0);
 			}
 
 			// (You Win)/(They Win)/(Tie) label directly below the icons,
@@ -596,11 +581,11 @@ namespace PokerCheat
 				float labelX = x + labelOffsetX;
 				float labelY = y + height + labelOffsetY;
 
-				char formatText[192];
-				sprintf_s(formatText, "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='30'>~s~%s</FONT></P><TEXTFORMAT>", label);
+				std::string formatText = "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='30'>~s~"
+					+ std::string(label) + "</FONT></P><TEXTFORMAT>";
 
 				UIDEBUG::_BG_SET_TEXT_COLOR(labelR, labelG, labelB, 255);
-				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), formatText), labelX, labelY);
+				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), labelX, labelY);
 			}
 		}
 
@@ -651,11 +636,11 @@ namespace PokerCheat
 			float winPredictionX = kReleaseWinPredictionX;
 			float winPredictionY = kReleaseWinPredictionY;
 #endif
-			char formatText[192];
-			sprintf_s(formatText, "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='40'>~s~%s</FONT></P><TEXTFORMAT>", label);
+			std::string formatText = "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='40'>~s~"
+				+ std::string(label) + "</FONT></P><TEXTFORMAT>";
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), formatText), winPredictionX, winPredictionY);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), winPredictionX, winPredictionY);
 		}
 
 #ifdef _DEBUG
@@ -726,6 +711,16 @@ namespace PokerCheat
 		// (0-1) coordinate grid -- thin lines every 0.05, labeled every
 		// 0.1 along the top and left edges -- so that can be done with
 		// actual numbers instead of blind guessing.
+		// Type-safe replacement for the old fixed char[8] + sprintf_s("%.1f",
+		// x) label buffer -- std::ostringstream, no manual buffer size to
+		// get wrong.
+		std::string FormatFixed1(float value)
+		{
+			std::ostringstream oss;
+			oss << std::fixed << std::setprecision(1) << value;
+			return oss.str();
+		}
+
 		void DrawCalibrationGrid()
 		{
 			constexpr float kGridStep = 0.05f;
@@ -750,16 +745,14 @@ namespace PokerCheat
 			for (int i = 0; i <= 10; i++)
 			{
 				float x = i * 0.1f;
-				char label[8];
-				sprintf_s(label, "%.1f", x);
-				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), label), x, 0.008f);
+				std::string label = FormatFixed1(x);
+				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), x, 0.008f);
 			}
 			for (int i = 0; i <= 10; i++)
 			{
 				float y = i * 0.1f;
-				char label[8];
-				sprintf_s(label, "%.1f", y);
-				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), label), 0.008f, y);
+				std::string label = FormatFixed1(y);
+				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), 0.008f, y);
 			}
 		}
 
@@ -1105,7 +1098,7 @@ namespace PokerCheat
 				}
 				s_preflopCursorSnapshot = deckCursor;
 				s_showdownLogged = false;
-				Log::Write("PredictionCheck: new hand at deck cursor=%d -- predicted final board: %s%c %s%c %s%c %s%c %s%c",
+				Log::Write("PredictionCheck: new hand at deck cursor={} -- predicted final board: {}{} {}{} {}{} {}{} {}{}",
 					deckCursor,
 					RankName(s_preflopPredRank[0]), SuitLetter(s_preflopPredSuit[0]),
 					RankName(s_preflopPredRank[1]), SuitLetter(s_preflopPredSuit[1]),
@@ -1116,22 +1109,22 @@ namespace PokerCheat
 			if (revealCount >= 5 && !s_showdownLogged && s_preflopCursorSnapshot != -999)
 			{
 				bool allMatch = true;
-				char realStr[64] = "";
-				char predStr[64] = "";
+				std::string realStr;
+				std::string predStr;
 				for (int i = 0; i < 5; i++)
 				{
 					std::int32_t realRank = ReadInt(thread, kBoardSlot + 1 + i * 2);
 					std::int32_t realSuit = ReadInt(thread, kBoardSlot + 1 + i * 2 + 1);
-					char c1[10];
-					sprintf_s(c1, "%s%c ", RankName(realRank), SuitLetter(realSuit));
-					strcat_s(realStr, c1);
-					char c2[10];
-					sprintf_s(c2, "%s%c ", RankName(s_preflopPredRank[i]), SuitLetter(s_preflopPredSuit[i]));
-					strcat_s(predStr, c2);
+					realStr += RankName(realRank);
+					realStr += SuitLetter(realSuit);
+					realStr += ' ';
+					predStr += RankName(s_preflopPredRank[i]);
+					predStr += SuitLetter(s_preflopPredSuit[i]);
+					predStr += ' ';
 					if (realRank != s_preflopPredRank[i] || realSuit != s_preflopPredSuit[i])
 						allMatch = false;
 				}
-				Log::Write("PredictionCheck: showdown -- predicted [%s] vs real [%s] -- %s",
+				Log::Write("PredictionCheck: showdown -- predicted [{}] vs real [{}] -- {}",
 					predStr, realStr, allMatch ? "MATCH" : "MISMATCH");
 				s_showdownLogged = true;
 			}
@@ -1245,9 +1238,9 @@ namespace PokerCheat
 				if (!handInProgress || card0Rank < 2 || card1Rank < 2)
 				{
 #ifdef _DEBUG
-					char line[192];
-					sprintf_s(line, "Seat %u: --- (stack %d, bet %d)%s", seat, stack, bet, stateLabel);
-					DrawLine(x, y, line);
+					std::ostringstream line;
+					line << "Seat " << seat << ": --- (stack " << stack << ", bet " << bet << ")" << stateLabel;
+					DrawLine(x, y, line.str().c_str());
 					y += kLineHeight;
 #endif
 					continue; // no valid hand here -- nothing else to compute for this seat
@@ -1298,23 +1291,22 @@ namespace PokerCheat
 				// win/lose/tie tag is itself a prediction, so it's
 				// additionally gated by ShowWinPrediction, same as the
 				// final verdict line below.
-				char line[192];
+				std::ostringstream line;
 				if (!isMe && !cfg.ShowOthersCards)
 				{
-					sprintf_s(line, "Seat %u: (stack %d, bet %d)%s", seat, stack, bet, stateLabel);
+					line << "Seat " << seat << ": (stack " << stack << ", bet " << bet << ")" << stateLabel;
 				}
 				else
 				{
 					const char* shownVsMe = (isMe || !cfg.ShowWinPrediction) ? "" : vsMe;
-					sprintf_s(line, "Seat %u: %s%c %s%c - %s (stack %d, bet %d)%s%s%s",
-						seat,
-						RankName(card0Rank), SuitLetter(card0Suit),
-						RankName(card1Rank), SuitLetter(card1Suit),
-						category >= 0 ? HandCategoryName(category) : "?",
-						stack, bet, stateLabel, shownVsMe,
-						isMe ? "  (You)" : "");
+					line << "Seat " << seat << ": "
+						<< RankName(card0Rank) << SuitLetter(card0Suit) << ' '
+						<< RankName(card1Rank) << SuitLetter(card1Suit) << " - "
+						<< (category >= 0 ? HandCategoryName(category) : "?")
+						<< " (stack " << stack << ", bet " << bet << ")"
+						<< stateLabel << shownVsMe << (isMe ? "  (You)" : "");
 				}
-				DrawLine(x, y, line);
+				DrawLine(x, y, line.str().c_str());
 				y += kLineHeight;
 #endif
 
@@ -1368,7 +1360,8 @@ namespace PokerCheat
 				// icon strip below draws -- boardRanks/boardSuits (used by
 				// DrawCommunityCardIcons()) are computed unconditionally
 				// above, independent of this text line entirely.
-				char boardLine[192] = "Board: ";
+				std::ostringstream boardLine;
+				boardLine << "Board: ";
 				std::int32_t deckIdx = deckCursor;
 				int cardsShown = 0;
 				for (int i = 0; i < 5; i++)
@@ -1395,9 +1388,7 @@ namespace PokerCheat
 						break; // deck cursor/count read as invalid -- see below
 					}
 
-					char card[10];
-					sprintf_s(card, "%s%c%s ", RankName(rank), SuitLetter(suit), predicted ? "*" : "");
-					strcat_s(boardLine, card);
+					boardLine << RankName(rank) << SuitLetter(suit) << (predicted ? "*" : "") << ' ';
 					cardsShown++;
 				}
 
@@ -1410,9 +1401,9 @@ namespace PokerCheat
 				// situation from "nothing left to predict" and shouldn't look
 				// the same on screen.
 				if (cardsShown < 5 && revealCount < 5)
-					strcat_s(boardLine, "(deck not ready -- cursor/count out of range)");
+					boardLine << "(deck not ready -- cursor/count out of range)";
 
-				DrawLine(x, y, boardLine);
+				DrawLine(x, y, boardLine.str().c_str());
 				y += kLineHeight;
 #endif
 
@@ -1477,16 +1468,16 @@ namespace PokerCheat
 			return;
 		}
 
-		Log::Write("ProbeTableStruct: poker_sp thread found (id=%u, stack=0x%llX, stackSize=%u)",
+		Log::Write("ProbeTableStruct: poker_sp thread found (id={}, stack={:#x}, stackSize={})",
 			thread->m_Context.m_ThreadId,
-			reinterpret_cast<unsigned long long>(thread->m_Stack),
+			reinterpret_cast<std::uintptr_t>(thread->m_Stack),
 			thread->m_Context.m_StackSize);
 
-		Log::Write("ProbeTableStruct: thread->m_ArgsPointer = %u, m_ArgsSize = %u",
+		Log::Write("ProbeTableStruct: thread->m_ArgsPointer = {}, m_ArgsSize = {}",
 			thread->m_ArgsPointer, thread->m_ArgsSize);
 
 		std::int32_t stakesTierArg = ReadInt(thread, kLaunchArgsSlot + kLaunchArgsStakesTierField);
-		Log::Write("ProbeTableStruct: LaunchArgs.f_12 (slot %u) = %d",
+		Log::Write("ProbeTableStruct: LaunchArgs.f_12 (slot {}) = {}",
 			kLaunchArgsSlot + kLaunchArgsStakesTierField, stakesTierArg);
 
 		std::int32_t frameworkHash = ReadInt(thread, kFrameworkHashSlot);
@@ -1500,23 +1491,23 @@ namespace PokerCheat
 			}
 		}
 
-		Log::Write("ProbeTableStruct: uLocal_14.f_1.f_39 (slot %u) = %d -- %s",
+		Log::Write("ProbeTableStruct: uLocal_14.f_1.f_39 (slot {}) = {} -- {}",
 			kFrameworkHashSlot, frameworkHash,
 			hashMatch ? "EXACT MATCH to a known stakes hash" : "no match");
 
 		std::int32_t seatIndex = ReadInt(thread, kF114SeatIndexSlot);
-		Log::Write("ProbeTableStruct: uLocal_14.f_114.f_9 (your seat) = %d", seatIndex);
+		Log::Write("ProbeTableStruct: uLocal_14.f_114.f_9 (your seat) = {}", seatIndex);
 
 		std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
 		std::int32_t f1State = ReadInt(thread, kF1StateSlot);
 		std::int32_t subStep = ReadInt(thread, kF114SubStepSlot);
 		std::int32_t localRaw = ReadInt(thread, kLocalRawSlot);
-		Log::Write("ProbeTableStruct: round-phase candidates -- uLocal_14.f_114.f_2010 = %d, uLocal_14.f_1.f_42 = %d, uLocal_14.f_114.f_2011 = %d, uLocal_14 (raw) = %d",
+		Log::Write("ProbeTableStruct: round-phase candidates -- uLocal_14.f_114.f_2010 = {}, uLocal_14.f_1.f_42 = {}, uLocal_14.f_114.f_2011 = {}, uLocal_14 (raw) = {}",
 			handState, f1State, subStep, localRaw);
 
 		std::int32_t boardHeader = ReadInt(thread, kBoardSlot);
 		std::int32_t revealCount = ReadInt(thread, kBoardSlot + 23);
-		Log::Write("ProbeTableStruct: Table.f_15 (board) header=%d (expect 11), reveal count=%d (expect 0/3/4/5)",
+		Log::Write("ProbeTableStruct: Table.f_15 (board) header={} (expect 11), reveal count={} (expect 0/3/4/5)",
 			boardHeader, revealCount);
 
 		// Traced func_589's (deck init) two call sites to their enclosing
@@ -1531,12 +1522,12 @@ namespace PokerCheat
 		std::uint32_t deckSlotA = kTableSlot + kDeckOffset;
 		std::int32_t deckCursorA = ReadInt(thread, deckSlotA + kDeckCursorOffset);
 		std::int32_t deckCountA = ReadInt(thread, deckSlotA + kDeckCountOffset);
-		Log::Write("ProbeTableStruct: Candidate A (f_287) deck cursor=%d, count=%d -- expected NOT to look like a valid live deck now",
+		Log::Write("ProbeTableStruct: Candidate A (f_287) deck cursor={}, count={} -- expected NOT to look like a valid live deck now",
 			deckCursorA, deckCountA);
 
 		std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
 		std::int32_t deckCount = ReadInt(thread, kDeckSlot + kDeckCountOffset);
-		Log::Write("ProbeTableStruct: Candidate B (f_1276, now used for all deck reads) cursor=%d, count=%d (expect count=52) -- next 8 undrawn cards:",
+		Log::Write("ProbeTableStruct: Candidate B (f_1276, now used for all deck reads) cursor={}, count={} (expect count=52) -- next 8 undrawn cards:",
 			deckCursor, deckCount);
 		for (std::int32_t i = 0; i < 8; i++)
 		{
@@ -1545,11 +1536,11 @@ namespace PokerCheat
 				break;
 			std::int32_t rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
 			std::int32_t suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
-			Log::Write("  deck[%d]: %s%c", idx, RankName(rank), SuitLetter(suit));
+			Log::Write("  deck[{}]: {}{}", idx, RankName(rank), SuitLetter(suit));
 		}
 
 		std::int32_t seatsHeader = ReadInt(thread, kTableSlot + kSeatsHeaderOffset);
-		Log::Write("ProbeTableStruct: Table.f_39 (seats) header=%d (expect 6)", seatsHeader);
+		Log::Write("ProbeTableStruct: Table.f_39 (seats) header={} (expect 6)", seatsHeader);
 
 		Log::Write("ProbeTableStruct: hole cards per seat (rank 2-14, suit 0-3 [C/D/H/S], -1 = no card):");
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
@@ -1562,7 +1553,7 @@ namespace PokerCheat
 			std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
 			std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
 
-			Log::Write("  seat %u (base slot %u): card0={rank=%d,suit=%d} card1={rank=%d,suit=%d}%s",
+			Log::Write("  seat {} (base slot {}): card0={{rank={},suit={}}} card1={{rank={},suit={}}}{}",
 				seat, seatBase, card0Rank, card0Suit, card1Rank, card1Suit,
 				(static_cast<std::int32_t>(seat) == seatIndex) ? "  <-- YOUR SEAT" : "");
 		}
@@ -1584,8 +1575,9 @@ namespace PokerCheat
 		Log::Write("ProbeTableStruct: raw deck window around kDeckSlot, offsets -4..+114 (compare against the hole cards logged above):");
 		for (std::int32_t off = -4; off <= 114; off++)
 		{
-			std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(static_cast<std::int32_t>(kDeckSlot) + off));
-			Log::Write("  deckraw[%+d] (slot %d) = %d", off, static_cast<std::int32_t>(kDeckSlot) + off, value);
+			std::int32_t slot = static_cast<std::int32_t>(kDeckSlot) + off;
+			std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(slot));
+			Log::Write("  deckraw[{:+}] (slot {}) = {}", off, slot, value);
 		}
 	}
 
@@ -1614,11 +1606,10 @@ namespace PokerCheat
 		std::uintptr_t end = base + static_cast<std::uintptr_t>(stackSizeSlots) * 8u;
 		std::uintptr_t localBase = base + static_cast<std::uintptr_t>(kLocalStructIndex) * 8u;
 
-		Log::Write("DumpLocalStackRange: start=0x%llX end=0x%llX (size=%u slots, %llu bytes)",
-			static_cast<unsigned long long>(base), static_cast<unsigned long long>(end),
-			stackSizeSlots, static_cast<unsigned long long>(end - base));
-		Log::Write("DumpLocalStackRange: uLocal_14 (slot %u) starts at 0x%llX",
-			kLocalStructIndex, static_cast<unsigned long long>(localBase));
+		Log::Write("DumpLocalStackRange: start={:#x} end={:#x} (size={} slots, {} bytes)",
+			base, end, stackSizeSlots, end - base);
+		Log::Write("DumpLocalStackRange: uLocal_14 (slot {}) starts at {:#x}",
+			kLocalStructIndex, localBase);
 	}
 
 	// Built to debug a live report of the seat card icons drawing extra/
@@ -1644,7 +1635,7 @@ namespace PokerCheat
 		std::int32_t f1State = ReadInt(thread, kF1StateSlot);
 		std::int32_t subStep = ReadInt(thread, kF114SubStepSlot);
 		std::int32_t localRaw = ReadInt(thread, kLocalRawSlot);
-		Log::Write("ProbeSeatOccupancy: mySeat=%d, f_114.f_2010=%d, f_1.f_42=%d, f_114.f_2011=%d, uLocal_14 (raw)=%d", mySeat, handState, f1State, subStep, localRaw);
+		Log::Write("ProbeSeatOccupancy: mySeat={}, f_114.f_2010={}, f_1.f_42={}, f_114.f_2011={}, uLocal_14 (raw)={}", mySeat, handState, f1State, subStep, localRaw);
 
 		int denseRow[kSeatCount];
 		ComputeDenseRowForSeat(thread, mySeat, denseRow);
@@ -1664,7 +1655,7 @@ namespace PokerCheat
 			std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
 			bool cardsValid = (card0Rank >= 2 && card1Rank >= 2);
 
-			Log::Write("  seat %u: occupiedMarker=%d state=%d stack=%d bet=%d cards={%d,%d}/{%d,%d} (valid=%s) denseRow=%d%s",
+			Log::Write("  seat {}: occupiedMarker={} state={} stack={} bet={} cards={{{},{}}}/{{{},{}}} (valid={}) denseRow={}{}",
 				seat, occupiedMarker, state, stack, bet,
 				card0Rank, card0Suit, card1Rank, card1Suit, cardsValid ? "yes" : "no",
 				denseRow[seat],
@@ -1691,7 +1682,7 @@ namespace PokerCheat
 		}
 
 		std::int32_t revealCount = ReadInt(thread, kBoardSlot + 23);
-		Log::Write("ProbeCommunityCardObjects: reveal count=%d, testing scene.f_671.f_11[0..4] (candidate absolute slot %u):",
+		Log::Write("ProbeCommunityCardObjects: reveal count={}, testing scene.f_671.f_11[0..4] (candidate absolute slot {}):",
 			revealCount, kCommunityCardObjectsBase);
 
 		for (std::uint32_t j = 0; j < kCommunityCardObjectCount; j++)
@@ -1703,19 +1694,20 @@ namespace PokerCheat
 				Vector3 pos = ENTITY::GET_ENTITY_COORDS(handle, true, false);
 				float screenX = 0.0f, screenY = 0.0f;
 				BOOL onScreen = GRAPHICS::GET_SCREEN_COORD_FROM_WORLD_COORD(pos.x, pos.y, pos.z, &screenX, &screenY);
-				Log::Write("  slot[%u]: handle=%d EXISTS, world=(%.3f, %.3f, %.3f), screen=(%.4f, %.4f), onScreen=%d",
+				Log::Write("  slot[{}]: handle={} EXISTS, world=({:.3f}, {:.3f}, {:.3f}), screen=({:.4f}, {:.4f}), onScreen={}",
 					j, handle, pos.x, pos.y, pos.z, screenX, screenY, onScreen);
 			}
 			else
 			{
-				Log::Write("  slot[%u]: handle=%d does NOT exist (raw window -4..+9 around it, for re-deriving the offset if this is wrong):",
+				Log::Write("  slot[{}]: handle={} does NOT exist (raw window -4..+9 around it, for re-deriving the offset if this is wrong):",
 					j, handle);
 				if (j == 0)
 				{
 					for (std::int32_t off = -4; off <= 9; off++)
 					{
-						std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(static_cast<std::int32_t>(kCommunityCardObjectsBase) + off));
-						Log::Write("    scenecardraw[%+d] (slot %d) = %d", off, static_cast<std::int32_t>(kCommunityCardObjectsBase) + off, value);
+						std::int32_t slot = static_cast<std::int32_t>(kCommunityCardObjectsBase) + off;
+						std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(slot));
+						Log::Write("    scenecardraw[{:+}] (slot {}) = {}", off, slot, value);
 					}
 				}
 			}

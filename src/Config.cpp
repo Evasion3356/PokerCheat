@@ -5,7 +5,7 @@
 
 #include <windows.h>
 #include <fstream>
-#include <cstdio>
+#include <sstream>
 #include <cstdlib>
 #include <string>
 #include <exception>
@@ -50,6 +50,25 @@ namespace
 		return path;
 	}
 
+	// Log::Write's format strings are narrow (fmt/spdlog, not wide) --
+	// this narrows ResolveIniPath()'s std::wstring for the two log lines
+	// that mention it, via the real Win32 conversion API rather than a
+	// naive per-character truncation (which would mangle any non-ASCII
+	// byte in the game's install path).
+	std::string NarrowPath(const std::wstring& wide)
+	{
+		if (wide.empty())
+			return {};
+
+		int size = WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, nullptr, 0, nullptr, nullptr);
+		if (size <= 0)
+			return {};
+
+		std::string narrow(static_cast<std::size_t>(size - 1), '\0'); // size includes the null terminator
+		WideCharToMultiByte(CP_UTF8, 0, wide.c_str(), -1, narrow.data(), size, nullptr, nullptr);
+		return narrow;
+	}
+
 	// Generic "read or default" on top of inipp::get_value(): that
 	// function only writes into its out-param on success (key present
 	// and parses as T), and leaves it untouched otherwise -- so seeding
@@ -65,9 +84,13 @@ namespace
 
 	void SetFloat(Section& sec, const char* key, float value)
 	{
-		char buf[64];
-		sprintf_s(buf, "%g", value);
-		sec[key] = buf;
+		// std::ostringstream's default (defaultfloat) formatting matches
+		// printf's "%g" closely enough for an INI value round-trip --
+		// shortest representation, 6 significant digits by default --
+		// with no fixed-size buffer to size wrong.
+		std::ostringstream oss;
+		oss << value;
+		sec[key] = oss.str();
 	}
 
 	void SetBool(Section& sec, const char* key, bool value)
@@ -182,11 +205,11 @@ namespace
 			if (os)
 				ini.generate(os);
 			else
-				Log::Write("Config::Reload -- failed to open %ls for writing", ResolveIniPath().c_str());
+				Log::Write("Config::Reload -- failed to open {} for writing", NarrowPath(ResolveIniPath()));
 		}
 
-		Log::Write("Config::Reload -- loaded from %ls (ShowCommunityCards=%d ShowOthersCards=%d ShowWinPrediction=%d)",
-			ResolveIniPath().c_str(), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction);
+		Log::Write("Config::Reload -- loaded from {} (ShowCommunityCards={} ShowOthersCards={} ShowWinPrediction={})",
+			NarrowPath(ResolveIniPath()), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction);
 	}
 }
 
@@ -213,7 +236,7 @@ namespace Config
 		}
 		catch (const std::exception& e)
 		{
-			Log::Write("Config::Reload -- std::exception: %s -- keeping previous config values", e.what());
+			Log::Write("Config::Reload -- std::exception: {} -- keeping previous config values", e.what());
 		}
 		catch (...)
 		{

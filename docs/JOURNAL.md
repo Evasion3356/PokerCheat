@@ -2071,3 +2071,110 @@ only one card set was ever visible. Found by just reading the file.
 
 All changes build clean in both configs; user testing throughout, not a
 cold handoff.
+
+## Session 12: C++ modernization -- spdlog logger, std::string everywhere, no C-style casts
+
+Not a reversing session -- no new offsets, no new game-behavior findings.
+User request: "C++ the shit out of" this codebase (no C-style casts,
+STL/STL-adjacent only, type-safe, no CRT-buffer runtime-crash surface),
+explicitly referencing the same cleanup already under way in
+`../BlackjackCheat` and its logger swap to spdlog. A prior audit of this
+file's own casts turned up nothing to fix -- every cast here was already
+`static_cast`/`reinterpret_cast`/`const_cast` (`PatternScan.cpp`,
+`GamePointers.cpp` in particular were already clean, presumably because
+they were written after `PokerCheat.cpp`'s own oldest code). The real
+work was two things `PokerCheat.cpp` and `Config.cpp` still had left over
+from earlier sessions: fixed `char[]` buffers with `sprintf_s`/
+`strcpy_s`/`strcat_s` (texture names, card-set dictionary names, the
+`(You Win)`/verdict rich-text strings, every debug per-seat/board line,
+the calibration-grid axis labels, `Config::SetFloat`'s INI value buffer),
+and the hand-rolled `fopen_s`/`vfprintf` logger.
+
+### Logger: spdlog, header-only, fmt call sites
+
+Added `external/spdlog` as a submodule (same commit BlackjackCheat's own
+in-progress submodule already pins, `57cb5fb7a8ff...`, i.e. its current
+HEAD -- spdlog 1.17.0). `Log.h` now wraps a `spdlog::basic_logger_mt`
+writing `PokerCheat.log` with pattern `"[%H:%M:%S.%e] %v"` (matches the
+old hand-built `[HH:MM:SS.mmm] ` prefix exactly), opened once via a
+magic-static instead of reopened with `fopen_s` on every call.
+`SPDLOG_HEADER_ONLY` is defined before including it so no separate
+spdlog `.cpp` needs adding to the vcxproj -- it compiles straight into
+this project's own translation units, same as inipp/RDR-Classes.
+
+The actual point of the swap: `Log::Write` used to be `(const char* fmt,
+...)` straight into `vfprintf` -- a mismatched `%s`/`%d` against the
+real argument list was a genuine, silent runtime-UB risk (wrong type
+pulled off the `va_list`, or reading past the last real argument if the
+format string claimed more). The new signature,
+`Write(spdlog::format_string_t<Args...>, Args&&...)`, validates the
+fmt `{}` placeholder count against `Args` at COMPILE time -- a mismatch
+is now a build error instead of a runtime one. Every one of this
+project's ~35 `Log::Write` call sites (`PokerCheat.cpp`, `Config.cpp`,
+`GamePointers.cpp`, `script.cpp`) got converted from `%`-specifiers to
+`{}` by hand: `%d`/`%u`/`%s`/`%c` -> `{}`, `%.Nf` -> `{:.Nf}`, `%+d` ->
+`{:+}`, and `"0x%llX"` -> `{:#x}` (fmt supplies its own `0x` prefix, so
+the literal one in the old format string had to go). Two probe log
+lines (`ProbeTableStruct`'s per-seat dump, `ProbeSeatOccupancy`'s)
+contain LITERAL curly braces in their own text (`card0={rank=...}`) --
+those needed escaping as `{{`/`}}`, easy to get wrong silently since a
+missed escape just produces a differently-garbled log line, not a build
+error; verified by hand against fmt's escaping rules, not just by
+compiling. Two call sites in `Config.cpp` logged a `std::wstring` path
+via the old `%ls` -- fmt has no narrow-format-string-into-wide-string
+conversion, so added a small `NarrowPath()` helper (`WideCharToMultiByte`
+into UTF-8) rather than fighting fmt's wide/narrow split.
+
+Compiling against the bundled fmt failed at first with a MSVC-only
+static_assert ("Unicode support requires compiling with /utf-8") --
+this project's `CharacterSet` is `MultiByte` and nothing previously
+forced a UTF-8 source/execution charset. Fixed by adding `/utf-8` to
+`AdditionalOptions` in both configs rather than disabling fmt's Unicode
+support -- the more correct fix, and harmless here since this project's
+literals are all plain ASCII anyway.
+
+Verified with a standalone smoke test (a throwaway .cpp including only
+`Log.h`, compiled directly with `cl /utf-8 /std:c++latest`, run outside
+the game entirely) exercising one call site of each converted format
+(plain string, `%s`->`{}`, `0x%llX`->`{:#x}`, the escaped-brace seat
+dump, `%+d`, and the `%.Nf`/`%.Nf` float pair) -- output matched the old
+printf-based formatting byte-for-byte (same `[HH:MM:SS.mmm]` prefix,
+same `0x...` hex rendering, same escaped-brace text). Not a substitute
+for an in-game check (not done this session), but enough to catch a
+wrong fmt spec before it ever reached a live log.
+
+### std::string/std::ostringstream, no more fixed char[] buffers
+
+`BuildCardTextureName()` now returns `std::string` (and calls the
+existing `RankName()` instead of a second, duplicate rank-name switch --
+the same simplification `BlackjackCheat.cpp`'s own ported copy of this
+function already made); `FindLoadedCardSetDict()` takes a `std::string&`
+out-param instead of `char*, size_t`. Every debug/HUD string that used
+to be built with `sprintf_s`/`strcat_s` into a fixed buffer
+(`DrawCommunityCardIcons`/`DrawSeatCardIcons`'s texture names, the
+`(You Win)`/`(They Win)`/`(Tie)` and win-prediction rich-text strings,
+`DrawCalibrationGrid`'s axis labels via a new `FormatFixed1()` helper,
+every per-seat debug line and the `Board:` line in `DrawOverlay()`, and
+the `PredictionCheck` showdown real/predicted card-string diff) now
+builds a `std::string`/`std::ostringstream` instead. `Config::SetFloat`
+swapped its `char[64]` + `sprintf_s("%g", ...)` for an `ostringstream`
+(default `operator<<` float formatting matches `%g`'s shortest-
+representation/6-significant-digit behavior closely enough for an INI
+round-trip). `const_cast<char*>(str.c_str())` is used only at the actual
+native call boundary (`DRAW_SPRITE`, `HAS_STREAMED_TEXTURE_DICT_LOADED`,
+`CREATE_STRING`), never upstream of it -- same convention
+`BlackjackCheat.cpp`'s already-ported card-icon code follows, and now
+documented in this file's own CLAUDE.md (Coding Conventions section,
+new this session).
+
+### Verification
+
+Both `PokerCheat.vcxproj` configs (`Debug|x64`, `Release|x64`) build
+clean with zero warnings introduced. `tests/PokerHandEvalTests.exe`
+still prints `ALL PASS` (untouched by this session -- `PokerHandEval.h`
+has zero string/logging code in it to begin with). Not yet verified
+in-game (no live log to inspect this session) -- the smoke test above
+covers the logger's format-string correctness, but not, e.g., whether
+spdlog's file sink behaves correctly under ScriptHookRDR2's actual
+process/fiber environment; that's the first thing to check next session
+if `PokerCheat.log` doesn't show up next time the mod is actually run.

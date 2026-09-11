@@ -27,8 +27,8 @@ namespace GamePointers
 			}
 
 			auto resolved = PatternScan::ResolveRip(*match, kScriptThreadsOperandOffset);
-			Log::Write("GamePointers::GetScriptThreads: pattern matched at 0x%llX, resolved to 0x%llX",
-				static_cast<unsigned long long>(*match), static_cast<unsigned long long>(resolved));
+			Log::Write("GamePointers::GetScriptThreads: pattern matched at {:#x}, resolved to {:#x}",
+				*match, resolved);
 			return reinterpret_cast<rage::atArray<rage::scrThread*>*>(resolved);
 		}();
 
