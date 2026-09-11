@@ -82,6 +82,12 @@ namespace PokerCheat
 		Log::Write("PokerCheat::Toggle -> {}", Enabled ? "ON" : "OFF");
 	}
 
+	void SetEnabled(bool enabled)
+	{
+		Enabled = enabled;
+		Log::Write("PokerCheat::SetEnabled -> {}", Enabled ? "ON" : "OFF");
+	}
+
 #ifdef _DEBUG
 	bool CalibrationGridEnabled = false;
 	bool FontTestEnabled = false;

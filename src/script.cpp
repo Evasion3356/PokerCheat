@@ -53,10 +53,10 @@ void ScriptMain()
 	// all, so it enables itself unconditionally below instead.
 	BuildMenu();
 #else
-	// No menu in Release to flip this from, so start already polling --
-	// same effect as picking "Toggle Poker Cheat" from the Debug menu
-	// once, just automatic instead of requiring a keypress.
-	PokerCheat::Toggle();
+	// No menu in Release to flip this from, so start already polling.
+	// SetEnabled(true), not Toggle() -- idempotent against ScriptMain
+	// ever being re-entered (see PokerCheat.h's SetEnabled comment).
+	PokerCheat::SetEnabled(true);
 #endif
 
 	while (true)

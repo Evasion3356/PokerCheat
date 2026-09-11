@@ -14,6 +14,16 @@ namespace PokerCheat
 	// HUD every tick via OnTick(); when off, does nothing.
 	void Toggle();
 
+	// Sets Enabled directly (idempotent, unlike Toggle()). Release's
+	// ScriptMain calls this instead of Toggle() -- see script.cpp -- so
+	// that if ScriptHookRDR2 ever re-enters ScriptMain (observed live in
+	// BlackjackCheat.log and PokerCheat.log both: a second "started" log
+	// line minutes after the first, at the identical timestamp in both
+	// mods' logs, pointing at a global script-VM restart rather than
+	// either mod's own bug), the advisor doesn't get silently toggled
+	// back off.
+	void SetEnabled(bool enabled);
+
 	// Called every ScriptMain tick regardless of Enabled state (Enabled is
 	// checked internally) -- same convention as CollectorOffline's
 	// MetalDetector::Update(). Draws the HUD when Enabled and poker_sp is
