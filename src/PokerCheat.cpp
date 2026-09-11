@@ -74,14 +74,16 @@
 namespace PokerCheat
 {
 	bool Enabled = false;
-	bool CalibrationGridEnabled = false;
-	bool FontTestEnabled = false;
 
 	void Toggle()
 	{
 		Enabled = !Enabled;
 		Log::Write("PokerCheat::Toggle -> %s", Enabled ? "ON" : "OFF");
 	}
+
+#ifdef _DEBUG
+	bool CalibrationGridEnabled = false;
+	bool FontTestEnabled = false;
 
 	void ToggleCalibrationGrid()
 	{
@@ -94,6 +96,7 @@ namespace PokerCheat
 		FontTestEnabled = !FontTestEnabled;
 		Log::Write("PokerCheat::ToggleFontTest -> %s", FontTestEnabled ? "ON" : "OFF");
 	}
+#endif
 
 	// ------------------------------------------------------------------
 	// Confirmed struct layout (see header comment above and docs/JOURNAL.md
@@ -507,7 +510,7 @@ namespace PokerCheat
 #ifndef _DEBUG
 		constexpr float kReleaseSeatCardIconBaseX = 0.18f;
 		constexpr float kReleaseSeatCardIconBaseY = 0.83f;
-		constexpr float kReleaseSeatCardIconStepY = -0.09f;
+		constexpr float kReleaseSeatCardIconStepY = -0.0915f;
 		constexpr float kReleaseSeatCardIconSpacingX = 0.02f;
 		constexpr float kReleaseSeatCardIconWidth = 0.02f;
 		constexpr float kReleaseSeatCardIconHeight = 0.045f;
@@ -601,6 +604,23 @@ namespace PokerCheat
 			}
 		}
 
+		// Standalone win-prediction status position -- Debug builds read
+		// this from Config (PokerCheat.ini's [HUD] section) for live
+		// Reload Config tuning; Release bakes in the user-confirmed
+		// values directly as constexpr, same convention as the
+		// community-card/seat-card icon strips above (see Config.h's
+		// header comment on WinPredictionX etc.) -- an end user shouldn't
+		// need to calibrate HUD text placement themselves, and Release's
+		// PokerCheat.ini never gets a [HUD] section written to it at all
+		// (see Config.cpp). This is the only HUD text position Release
+		// still needs -- the debug text panel below (PanelX/Y, TextScale,
+		// TitleTextScale) has no Release use at all now that the panel
+		// itself is Debug-only (see DrawOverlay()).
+#ifndef _DEBUG
+		constexpr float kReleaseWinPredictionX = 0.48f;
+		constexpr float kReleaseWinPredictionY = 0.5f;
+#endif
+
 		// Standalone "are you predicted to win" status -- deliberately
 		// separate from both the seat card icons (which now only ever
 		// show opponents, per user request) and the text panel. Same
@@ -623,14 +643,22 @@ namespace PokerCheat
 			int g = (result > 0) ? 255 : (result < 0) ? 110 : 230;
 			int b = (result > 0) ? 140 : (result < 0) ? 110 : 140;
 
+#ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
+			float winPredictionX = cfg.WinPredictionX;
+			float winPredictionY = cfg.WinPredictionY;
+#else
+			float winPredictionX = kReleaseWinPredictionX;
+			float winPredictionY = kReleaseWinPredictionY;
+#endif
 			char formatText[192];
 			sprintf_s(formatText, "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='40'>~s~%s</FONT></P><TEXTFORMAT>", label);
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), formatText), cfg.WinPredictionX, cfg.WinPredictionY);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), formatText), winPredictionX, winPredictionY);
 		}
 
+#ifdef _DEBUG
 		// Checked three independent native databases (the stock SDK's
 		// natives.h, rdr3-nativedb-data/natives.json, and the decompiler's
 		// own bundled natives_rdr.json) for a SET_TEXT_FONT equivalent --
@@ -648,7 +676,9 @@ namespace PokerCheat
 		// drop shadow (was previously called with all-zero params, which
 		// just disables it), and a warm parchment/cream text color
 		// instead of pure white to at least sit closer to RDR2's actual
-		// HUD palette.
+		// HUD palette. Debug-only -- this backs the raw-data text panel
+		// (DrawOverlay()'s seat-list/board text), which has no Release
+		// use at all (see that function's header comment).
 		constexpr int kPanelR = 22, kPanelG = 18, kPanelB = 14, kPanelA = 205;
 		constexpr int kTextR = 235, kTextG = 222, kTextB = 194, kTextA = 235;
 		constexpr int kTitleR = 255, kTitleG = 238, kTitleB = 180, kTitleA = 255;
@@ -656,7 +686,8 @@ namespace PokerCheat
 		void DrawLine(float x, float y, const char* text, bool title = false)
 		{
 			const Config::Values& cfg = Config::Get();
-			UI::SET_TEXT_SCALE(0.0f, title ? cfg.TitleTextScale : cfg.TextScale);
+			float textScale = title ? cfg.TitleTextScale : cfg.TextScale;
+			UI::SET_TEXT_SCALE(0.0f, textScale);
 			if (title)
 				UI::SET_TEXT_COLOR_RGBA(kTitleR, kTitleG, kTitleB, kTitleA);
 			else
@@ -676,6 +707,10 @@ namespace PokerCheat
 		{
 			GRAPHICS::DRAW_RECT(x + width * 0.5f, y + height * 0.5f, width, height, kPanelR, kPanelG, kPanelB, kPanelA, 0, 0);
 		}
+
+		// Everything below, through the end of DrawFontTest(), is
+		// Debug-only dev-tuning diagnostics wired to the F10 menu (see
+		// PokerCheat.h) -- no caller left anywhere in Release.
 
 		// The real community-card icon strip the user actually wants icons
 		// drawn over (top-right, "look like 2D images") is a Scaleform/
@@ -858,6 +893,7 @@ namespace PokerCheat
 				y += kFontTestLineHeight;
 			}
 		}
+#endif // _DEBUG
 
 		constexpr std::size_t kHandEvalBufWords = 64;
 
@@ -973,16 +1009,54 @@ namespace PokerCheat
 			std::int32_t mySeat = ReadInt(thread, kF114SeatIndexSlot);
 
 			// Between-hands suppression via poker_sp's internal state
-			// fields (f_2010, f_2011, f_1.f_42, raw uLocal_14) is
-			// abandoned -- four different candidates tried, none held up
-			// under live testing (constant all session, phase-relative
-			// with no single global threshold, or briefly reading an
-			// invalid number mid-transition). Back to the simple rule:
-			// draw whenever poker_sp is running at all (the early-return
-			// FindScriptThread/GetScriptLocalAddress checks above this
-			// point already gate that). See docs/JOURNAL.md for the full
-			// dead-end trail if this needs revisiting.
-			constexpr bool handInProgress = true;
+			// fields (f_2010, f_2011, f_1.f_42, raw uLocal_14) was
+			// abandoned in Session 11 -- four different candidates tried,
+			// none held up under live testing. Reinstated via a different
+			// signal instead of another state-field guess: user observed
+			// that opponent seat card icons and win/lose labels ALREADY
+			// correctly vanish between hands, for a reason unrelated to
+			// any phase field -- they're gated on real hole-card data
+			// being valid (card0Rank >= 2 && card1Rank >= 2, same check
+			// the per-seat loop below uses), and hole-card memory itself
+			// reads as invalid (-1) once a hand ends, not just stale.
+			// That's a real, always-correct "is a hand actually in
+			// progress" litmus test -- use it here too, instead of only
+			// in the per-seat loop, so the predicted community board
+			// (which has no such per-seat validity check of its own,
+			// hence the stale-board-between-hands bug) gets suppressed
+			// the same way.
+			//
+			// OPPONENT seats only, not mySeat -- a live report showed the
+			// board/win-prediction still drawing between hands even after
+			// the first cut of this fix (which also counted mySeat), so
+			// the player's OWN hole cards apparently stay valid-looking
+			// in memory between hands even once every opponent's have
+			// gone invalid (same asymmetry noted elsewhere in this file:
+			// a folded seat's cards stay valid for the rest of THAT hand
+			// too -- the game clears seat card memory more conservatively
+			// than seat state). Opponent seat validity is the litmus test
+			// that's actually confirmed correct (it's what makes the seat
+			// icons/labels disappear on time), so mirror it exactly here
+			// rather than trusting mySeat's cards to mean the same thing.
+			bool handInProgress = false;
+			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
+			{
+				if (static_cast<std::int32_t>(seat) == mySeat)
+					continue; // opponents only -- see comment above
+
+				std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
+				if (ReadInt(thread, seatBase + 0) == -1)
+					continue; // unoccupied seat
+
+				std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
+				std::int32_t c0Rank = ReadInt(thread, cardsBase + 0);
+				std::int32_t c1Rank = ReadInt(thread, cardsBase + 2);
+				if (c0Rank >= 2 && c1Rank >= 2)
+				{
+					handInProgress = true;
+					break;
+				}
+			}
 
 			// Read once up front, reused for the predicted board, the
 			// "Upcoming" line, and the real "Board" line below.
@@ -1062,6 +1136,21 @@ namespace PokerCheat
 				s_showdownLogged = true;
 			}
 
+#ifdef _DEBUG
+			// The whole raw-data text panel below (backing rect, title,
+			// one "Seat N: rank suit - category (stack, bet) [tag]" line
+			// per seat, the "Board: ..." text line) is a dev debugging
+			// surface, not one of the four user-facing overlay elements
+			// (community card icons/ShowCommunityCards, opponent card
+			// icons/ShowOthersCards, the standalone win-prediction status/
+			// ShowWinPrediction, the per-opponent win/lose label/
+			// ShowWouldWinHandAgainst) -- Debug-only, matching the F10
+			// menu it was designed alongside. A live report caught this
+			// still drawing in Release even after the menu/keyboard strip,
+			// since it was never actually gated by any of those four
+			// Config toggles (or _DEBUG) to begin with -- only individual
+			// PIECES of each line were (e.g. opponent cards behind
+			// ShowOthersCards), never the panel/line itself.
 			float x = Config::Get().PanelX;
 			float y = Config::Get().PanelY;
 			constexpr float kLineHeight = 0.028f;
@@ -1079,6 +1168,7 @@ namespace PokerCheat
 
 			DrawLine(x, y, revealCount >= 5 ? "PokerCheat" : "PokerCheat (predicted final hands)", true);
 			y += kLineHeight;
+#endif
 
 			// Evaluate my own hand first (if I have one) so every
 			// opponent can be compared against it as the main loop goes,
@@ -1133,15 +1223,16 @@ namespace PokerCheat
 				// draws a "folded" status icon exactly when f_6==1,
 				// confirming the mapping.
 				std::int32_t state = ReadInt(thread, seatBase + 6);
-				const char* stateLabel = (state == 1) ? " [FOLDED]" : (state == 2) ? " [ALL-IN]" : "";
 				bool isActive = (state == 0 || state == 2); // still eligible to win the pot
 
-				// seat.f_2 (stack) / seat.f_3 (current bet) -- shown here
-				// specifically so these numbers can be cross-checked
-				// against the vanilla HUD's own per-seat chip display to
-				// confirm which seat is which on screen.
+#ifdef _DEBUG
+				// seat.f_2 (stack) / seat.f_3 (current bet) / the fold/
+				// all-in tag -- debug text panel only, not used by any of
+				// the four Release overlay elements.
+				const char* stateLabel = (state == 1) ? " [FOLDED]" : (state == 2) ? " [ALL-IN]" : "";
 				std::int32_t stack = ReadInt(thread, seatBase + 2);
 				std::int32_t bet = ReadInt(thread, seatBase + 3);
+#endif
 
 				std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
 				std::int32_t card0Rank = ReadInt(thread, cardsBase + 0);
@@ -1149,99 +1240,106 @@ namespace PokerCheat
 				std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
 				std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
 
-				char line[192];
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 
 				if (!handInProgress || card0Rank < 2 || card1Rank < 2)
 				{
+#ifdef _DEBUG
+					char line[192];
 					sprintf_s(line, "Seat %u: --- (stack %d, bet %d)%s", seat, stack, bet, stateLabel);
+					DrawLine(x, y, line);
+					y += kLineHeight;
+#endif
+					continue; // no valid hand here -- nothing else to compute for this seat
 				}
-				else
+
+				std::int32_t category = -1;
+				const char* vsMe = "";
+				int vsMeResult = 2; // 2 = no comparison available -- see DrawSeatCardIcons()'s header comment
+
+				// Hand evaluation/comparison always runs regardless of
+				// display settings below -- the final verdict line
+				// (ShowWinPrediction) needs every active opponent's
+				// worst-case comparison even when their individual
+				// cards/hand aren't being shown (ShowOthersCards off).
+				if (isActive)
 				{
-					std::int32_t category = -1;
-					const char* vsMe = "";
-					int vsMeResult = 2; // 2 = no comparison available -- see DrawSeatCardIcons()'s header comment
-
-					// Hand evaluation/comparison always runs regardless of
-					// display settings below -- the final verdict line
-					// (ShowWinPrediction) needs every active opponent's
-					// worst-case comparison even when their individual
-					// cards/hand aren't being shown (ShowOthersCards off).
-					if (isActive)
+					if (isMe)
 					{
-						if (isMe)
-						{
-							category = myCategory;
-						}
-						else
-						{
-							std::int32_t oppRanks[7] = { card0Rank, card1Rank, boardRanks[0], boardRanks[1], boardRanks[2], boardRanks[3], boardRanks[4] };
-							std::int32_t oppSuits[7] = { card0Suit, card1Suit, boardSuits[0], boardSuits[1], boardSuits[2], boardSuits[3], boardSuits[4] };
-							HandScore oppScore = EvaluateHand(oppRanks, oppSuits);
-							category = oppScore.category;
-
-							if (haveMyHand && category >= 0)
-							{
-								anyOpponent = true;
-								int cmp = CompareHands(myHandScore, oppScore); // >0 I win, <0 they win, 0 tie
-								vsMe = (cmp > 0) ? " [you win]" : (cmp < 0) ? " [they win]" : " [tie]";
-								vsMeResult = (cmp > 0) ? 1 : (cmp < 0) ? -1 : 0;
-								if (cmp < 0)
-									worstResult = -1;
-								else if (cmp == 0 && worstResult > 0)
-									worstResult = 0;
-							}
-						}
-					}
-
-					// Your own seat is always shown in full -- that's your
-					// own hand, not hidden information. Opponents' cards/
-					// hand name are gated by ShowOthersCards; the per-seat
-					// win/lose/tie tag is itself a prediction, so it's
-					// additionally gated by ShowWinPrediction, same as the
-					// final verdict line below.
-					const Config::Values& cfg = Config::Get();
-					if (!isMe && !cfg.ShowOthersCards)
-					{
-						sprintf_s(line, "Seat %u: (stack %d, bet %d)%s", seat, stack, bet, stateLabel);
+						category = myCategory;
 					}
 					else
 					{
-						const char* shownVsMe = (isMe || !cfg.ShowWinPrediction) ? "" : vsMe;
-						sprintf_s(line, "Seat %u: %s%c %s%c - %s (stack %d, bet %d)%s%s%s",
-							seat,
-							RankName(card0Rank), SuitLetter(card0Suit),
-							RankName(card1Rank), SuitLetter(card1Suit),
-							category >= 0 ? HandCategoryName(category) : "?",
-							stack, bet, stateLabel, shownVsMe,
-							isMe ? "  (You)" : "");
+						std::int32_t oppRanks[7] = { card0Rank, card1Rank, boardRanks[0], boardRanks[1], boardRanks[2], boardRanks[3], boardRanks[4] };
+						std::int32_t oppSuits[7] = { card0Suit, card1Suit, boardSuits[0], boardSuits[1], boardSuits[2], boardSuits[3], boardSuits[4] };
+						HandScore oppScore = EvaluateHand(oppRanks, oppSuits);
+						category = oppScore.category;
 
-						// Icons next to the opponent's own name/panel on
-						// the REAL vanilla HUD -- see DrawSeatCardIcons()'s
-						// header comment for the relative-seat-offset
-						// mapping and its still-uncalibrated status. Uses
-						// the DENSE row computed above (denseRowForSeat),
-						// not the raw seat-number offset directly, so an
-						// unoccupied seat doesn't leave a gap in the list.
-						// vsMeResult carries the (You Win)/(They Win)/(Tie)
-						// comparison down into the icon draw itself. Gated
-						// on isActive -- a folded seat's real cards are
-						// still in memory (same reason the text panel's own
-						// "[FOLDED]" line still lists them), but per user
-						// report the icon overlay shouldn't keep revealing
-						// a folded opponent's cards once they're out of
-						// the pot.
-						if (!isMe && isActive)
+						if (haveMyHand && category >= 0)
 						{
-							int denseRow = denseRowForSeat[seat];
-							if (denseRow != 0)
-								DrawSeatCardIcons(denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult);
+							anyOpponent = true;
+							int cmp = CompareHands(myHandScore, oppScore); // >0 I win, <0 they win, 0 tie
+							vsMe = (cmp > 0) ? " [you win]" : (cmp < 0) ? " [they win]" : " [tie]";
+							vsMeResult = (cmp > 0) ? 1 : (cmp < 0) ? -1 : 0;
+							if (cmp < 0)
+								worstResult = -1;
+							else if (cmp == 0 && worstResult > 0)
+								worstResult = 0;
 						}
 					}
 				}
 
+				const Config::Values& cfg = Config::Get();
+
+#ifdef _DEBUG
+				// Your own seat is always shown in full -- that's your
+				// own hand, not hidden information. Opponents' cards/
+				// hand name are gated by ShowOthersCards; the per-seat
+				// win/lose/tie tag is itself a prediction, so it's
+				// additionally gated by ShowWinPrediction, same as the
+				// final verdict line below.
+				char line[192];
+				if (!isMe && !cfg.ShowOthersCards)
+				{
+					sprintf_s(line, "Seat %u: (stack %d, bet %d)%s", seat, stack, bet, stateLabel);
+				}
+				else
+				{
+					const char* shownVsMe = (isMe || !cfg.ShowWinPrediction) ? "" : vsMe;
+					sprintf_s(line, "Seat %u: %s%c %s%c - %s (stack %d, bet %d)%s%s%s",
+						seat,
+						RankName(card0Rank), SuitLetter(card0Suit),
+						RankName(card1Rank), SuitLetter(card1Suit),
+						category >= 0 ? HandCategoryName(category) : "?",
+						stack, bet, stateLabel, shownVsMe,
+						isMe ? "  (You)" : "");
+				}
 				DrawLine(x, y, line);
 				y += kLineHeight;
+#endif
+
+				// Icons next to the opponent's own name/panel on the REAL
+				// vanilla HUD -- see DrawSeatCardIcons()'s header comment
+				// for the relative-seat-offset mapping. Uses the DENSE row
+				// computed above (denseRowForSeat), not the raw seat-number
+				// offset directly, so an unoccupied seat doesn't leave a
+				// gap in the list. vsMeResult carries the (You Win)/(They
+				// Win)/(Tie) comparison down into the icon draw itself.
+				// Gated on isActive -- a folded seat's real cards are still
+				// in memory, but per user report the icon overlay
+				// shouldn't keep revealing a folded opponent's cards once
+				// they're out of the pot. Gated directly on ShowOthersCards
+				// here (this used to be implicit, nested inside the debug
+				// text panel's own ShowOthersCards branch above -- now that
+				// the text panel is Debug-only, this is the one and only
+				// place left enforcing that toggle for the actual HUD
+				// icons in Release).
+				if (!isMe && isActive && cfg.ShowOthersCards)
+				{
+					int denseRow = denseRowForSeat[seat];
+					if (denseRow != 0)
+						DrawSeatCardIcons(denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult);
+				}
 			}
 
 			// Board (community cards) -- ONE line, always showing all 5
@@ -1265,6 +1363,11 @@ namespace PokerCheat
 			// vanilla HUD itself hides during that window too.
 			if (Config::Get().ShowCommunityCards && handInProgress)
 			{
+#ifdef _DEBUG
+				// Debug-only text rendering of the same board data the
+				// icon strip below draws -- boardRanks/boardSuits (used by
+				// DrawCommunityCardIcons()) are computed unconditionally
+				// above, independent of this text line entirely.
 				char boardLine[192] = "Board: ";
 				std::int32_t deckIdx = deckCursor;
 				int cardsShown = 0;
@@ -1311,6 +1414,7 @@ namespace PokerCheat
 
 				DrawLine(x, y, boardLine);
 				y += kLineHeight;
+#endif
 
 				// Real card-face icons at the calibrated top-right strip
 				// position, using the same real/predicted split as the text
@@ -1349,11 +1453,13 @@ namespace PokerCheat
 
 	void OnTick()
 	{
+#ifdef _DEBUG
 		if (CalibrationGridEnabled)
 			DrawCalibrationGrid();
 
 		if (FontTestEnabled)
 			DrawFontTest();
+#endif
 
 		if (!Enabled)
 			return;
@@ -1361,6 +1467,7 @@ namespace PokerCheat
 		DrawOverlay();
 	}
 
+#ifdef _DEBUG
 	void ProbeTableStruct()
 	{
 		auto thread = GamePointers::FindScriptThread(rage::Joaat("poker_sp"));
@@ -1614,4 +1721,5 @@ namespace PokerCheat
 			}
 		}
 	}
+#endif // _DEBUG
 }

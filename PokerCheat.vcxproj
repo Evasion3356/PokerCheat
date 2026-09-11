@@ -11,10 +11,19 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\keyboard.cpp" />
+    <!-- Debug-only: the F10 test menu (scriptmenu.cpp) and the raw
+         key-state tracker it reads (keyboard.cpp) are dev-tuning
+         surfaces with no caller left anywhere in a Release build (see
+         script.cpp/main.cpp), excluded from Release entirely instead
+         of relying on the linker to discard unreferenced code. -->
+    <ClCompile Include="src\keyboard.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\script.cpp" />
-    <ClCompile Include="src\scriptmenu.cpp" />
+    <ClCompile Include="src\scriptmenu.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
+    </ClCompile>
     <ClCompile Include="src\PokerCheat.cpp" />
     <ClCompile Include="src\PatternScan.cpp" />
     <ClCompile Include="src\GamePointers.cpp" />

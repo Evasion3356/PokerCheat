@@ -98,19 +98,30 @@ namespace
 
 		Config::Values defaults;
 		auto& general = ini.sections["General"];
-		auto& hud = ini.sections["HUD"];
 
 		g_values.ShowCommunityCards = GetOr(general, "ShowCommunityCards", defaults.ShowCommunityCards);
 		g_values.ShowOthersCards = GetOr(general, "ShowOthersCards", defaults.ShowOthersCards);
 		g_values.ShowWinPrediction = GetOr(general, "ShowWinPrediction", defaults.ShowWinPrediction);
 		g_values.ShowWouldWinHandAgainst = GetOr(general, "ShowWouldWinHandAgainst", defaults.ShowWouldWinHandAgainst);
 
+#ifdef _DEBUG
+		// Debug-only -- see Config.h's header comment on PanelX etc.
+		// Release never reads or writes this section at all, so a
+		// Release-built PokerCheat.ini simply won't have a [HUD] section.
+		auto& hud = ini.sections["HUD"];
 		g_values.PanelX = GetOr(hud, "PanelX", defaults.PanelX);
 		g_values.PanelY = GetOr(hud, "PanelY", defaults.PanelY);
 		g_values.TextScale = GetOr(hud, "TextScale", defaults.TextScale);
 		g_values.TitleTextScale = GetOr(hud, "TitleTextScale", defaults.TitleTextScale);
 		g_values.WinPredictionX = GetOr(hud, "WinPredictionX", defaults.WinPredictionX);
 		g_values.WinPredictionY = GetOr(hud, "WinPredictionY", defaults.WinPredictionY);
+		SetFloat(hud, "PanelX", g_values.PanelX);
+		SetFloat(hud, "PanelY", g_values.PanelY);
+		SetFloat(hud, "TextScale", g_values.TextScale);
+		SetFloat(hud, "TitleTextScale", g_values.TitleTextScale);
+		SetFloat(hud, "WinPredictionX", g_values.WinPredictionX);
+		SetFloat(hud, "WinPredictionY", g_values.WinPredictionY);
+#endif
 
 		// Write the resolved values (file's own, or the default that was
 		// just substituted for anything missing) back into the in-memory
@@ -125,12 +136,6 @@ namespace
 		SetBool(general, "ShowOthersCards", g_values.ShowOthersCards);
 		SetBool(general, "ShowWinPrediction", g_values.ShowWinPrediction);
 		SetBool(general, "ShowWouldWinHandAgainst", g_values.ShowWouldWinHandAgainst);
-		SetFloat(hud, "PanelX", g_values.PanelX);
-		SetFloat(hud, "PanelY", g_values.PanelY);
-		SetFloat(hud, "TextScale", g_values.TextScale);
-		SetFloat(hud, "TitleTextScale", g_values.TitleTextScale);
-		SetFloat(hud, "WinPredictionX", g_values.WinPredictionX);
-		SetFloat(hud, "WinPredictionY", g_values.WinPredictionY);
 
 #ifdef _DEBUG
 		// Debug-only -- see Config.h's header comment on
@@ -180,9 +185,8 @@ namespace
 				Log::Write("Config::Reload -- failed to open %ls for writing", ResolveIniPath().c_str());
 		}
 
-		Log::Write("Config::Reload -- loaded from %ls (ShowCommunityCards=%d ShowOthersCards=%d ShowWinPrediction=%d PanelX=%.4f PanelY=%.4f)",
-			ResolveIniPath().c_str(), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction,
-			g_values.PanelX, g_values.PanelY);
+		Log::Write("Config::Reload -- loaded from %ls (ShowCommunityCards=%d ShowOthersCards=%d ShowWinPrediction=%d)",
+			ResolveIniPath().c_str(), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction);
 	}
 }
 

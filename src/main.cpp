@@ -45,11 +45,19 @@ BOOL APIENTRY DllMain(HMODULE hInstance, DWORD reason, LPVOID lpReserved)
 		GamePointers::GetScriptThreads();
 
 		scriptRegister(hInstance, ScriptMain);
+#ifdef _DEBUG
+		// Release has no menu to drive with keystrokes at all (see
+		// script.cpp) -- registering this hook there would just mean
+		// every keypress in the game writes into keyboard.cpp's key-state
+		// array for absolutely nothing to ever read. Debug-only.
 		keyboardHandlerRegister(OnKeyboardMessage);
+#endif
 		break;
 	case DLL_PROCESS_DETACH:
 		scriptUnregister(hInstance);
+#ifdef _DEBUG
 		keyboardHandlerUnregister(OnKeyboardMessage);
+#endif
 		break;
 	}
 	return TRUE;

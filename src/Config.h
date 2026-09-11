@@ -52,7 +52,15 @@ namespace Config
 		// equivalent tag in the debug text panel.
 		bool ShowWouldWinHandAgainst = true;
 
-		// HUD text panel (the seat/board/verdict text block).
+#ifdef _DEBUG
+		// HUD text panel (the seat/board/verdict text block). Debug-only,
+		// same convention as Card2DIconBaseX/SeatCardIconBaseX below --
+		// dev-tuning values, not something an end user should need to
+		// calibrate, so Release doesn't read/write this INI section at
+		// all and instead draws with the fixed values baked in directly
+		// (see DrawLine()'s/DrawOverlay()'s Release branch) -- the same
+		// user-confirmed "perfect" numbers below, just not
+		// config-overridable outside Debug.
 		float PanelX = 0.015f;
 		float PanelY = 0.30f;
 		float TextScale = 0.32f;
@@ -71,7 +79,6 @@ namespace Config
 		float WinPredictionX = 0.48f;
 		float WinPredictionY = 0.5f;
 
-#ifdef _DEBUG
 		// 2D community-card icon strip, top-right of screen -- see
 		// PokerCheat.cpp's DrawCommunityCardIcons() header comment for
 		// how these were calibrated. Debug-only: these are dev-tuning

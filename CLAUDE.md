@@ -48,8 +48,8 @@ exact same header the mod itself includes rather than a hand-copied
 duplicate that could silently drift out of sync:
 
 ```
-"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" tests\PokerHandEvalTests.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo /v:minimal
-bin\Release\PokerHandEvalTests.exe
+"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" tests\PokerHandEvalTests.vcxproj /p:Configuration=Debug /p:Platform=x64 /nologo /v:minimal
+bin\Debug\PokerHandEvalTests.exe
 ```
 
 Exits 0 and prints `ALL PASS` if every case passes; nonzero with a

@@ -20,6 +20,7 @@
 
 namespace
 {
+#ifdef _DEBUG
 	MenuController g_menuController;
 	MenuBase* g_mainMenu = nullptr;
 
@@ -36,6 +37,7 @@ namespace
 		g_mainMenu->AddItem(new MenuItemAction("Reload Config (see log)", Config::Reload));
 		g_menuController.RegisterMenu(g_mainMenu);
 	}
+#endif
 }
 
 void ScriptMain()
@@ -44,14 +46,27 @@ void ScriptMain()
 
 	// Config is loaded from DllMain now, not here -- see main.cpp.
 
+#ifdef _DEBUG
+	// Debug-only -- the F10 test menu (toggle, probes, calibration/font
+	// test tools) is a dev-tuning surface, not something an end user
+	// should ever see. Release has no menu to toggle the cheat from at
+	// all, so it enables itself unconditionally below instead.
 	BuildMenu();
+#else
+	// No menu in Release to flip this from, so start already polling --
+	// same effect as picking "Toggle Poker Cheat" from the Debug menu
+	// once, just automatic instead of requiring a keypress.
+	PokerCheat::Toggle();
+#endif
 
 	while (true)
 	{
+#ifdef _DEBUG
 		if (!g_menuController.HasActiveMenu() && MenuInput::MenuSwitchPressed())
 			g_menuController.PushMenu(g_mainMenu);
 
 		g_menuController.Update();
+#endif
 		PokerCheat::OnTick();
 
 		WAIT(0);

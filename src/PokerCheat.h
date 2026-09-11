@@ -14,6 +14,18 @@ namespace PokerCheat
 	// HUD every tick via OnTick(); when off, does nothing.
 	void Toggle();
 
+	// Called every ScriptMain tick regardless of Enabled state (Enabled is
+	// checked internally) -- same convention as CollectorOffline's
+	// MetalDetector::Update(). Draws the HUD when Enabled and poker_sp is
+	// running; no-ops otherwise.
+	void OnTick();
+
+#ifdef _DEBUG
+	// Everything below is wired to the F10 test menu only (see
+	// script.cpp's BuildMenu(), also Debug-only) -- dev-tuning/reversing
+	// tools with no caller at all in a Release build, so they don't exist
+	// there.
+
 	// Flips a diagnostic screen-space coordinate grid on/off (thin lines
 	// every 0.05, labeled every 0.1 along the top/left edges, normalized
 	// 0-1 UI coordinates). Wired to the F10 menu's "Toggle Calibration
@@ -36,12 +48,6 @@ namespace PokerCheat
 	// Test" item -- draws regardless of Enabled/poker state, same as the
 	// calibration grid, so it can be checked anywhere in-game.
 	void ToggleFontTest();
-
-	// Called every ScriptMain tick regardless of Enabled state (Enabled is
-	// checked internally) -- same convention as CollectorOffline's
-	// MetalDetector::Update(). Draws the HUD when Enabled and poker_sp is
-	// running; no-ops otherwise.
-	void OnTick();
 
 	// Diagnostic: finds poker_sp's running scrThread and logs the
 	// confirmed Table struct's key fields (board header/reveal count,
@@ -82,4 +88,5 @@ namespace PokerCheat
 	// "Probe Community Card Objects" item -- run with at least the flop
 	// revealed so there's a real object to test against.
 	void ProbeCommunityCardObjects();
+#endif
 }
