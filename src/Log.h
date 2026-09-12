@@ -26,6 +26,16 @@
 	silent runtime UB risk with the old vfprintf-based version (wrong
 	type read off the va_list, or reading past the last supplied arg
 	entirely); a mismatched {} now fails to compile instead.
+
+	Synchronous in both Debug and Release, deliberately -- an async
+	logger was tried (a background worker thread + queue in Release
+	builds only) and reverted: the ASI can get unloaded/ejected by
+	ScriptHookRDR2 at any point (see CLAUDE.md), and a queued-but-not-
+	yet-written log line racing that unload is a real risk an async
+	logger introduces for no real benefit here -- this mod logs at most
+	a handful of lines per second, nowhere near enough for the blocking
+	file write to be a measurable per-frame cost. Not worth trading a
+	small, unproven performance win for a lost-log-lines-on-eject risk.
 */
 
 #pragma once
