@@ -124,11 +124,18 @@ namespace GamePointers
 			// file whole. JSON has no NaN/Infinity literal, so `null` is the
 			// correct representation, same as every JSON library's own
 			// float-to-JSON serializer does for a non-finite value.
+			// i64 is quoted: JSON numbers are only interoperably safe up to
+			// 2^53 (RFC 8259's note on IEEE-754 double range), and a raw
+			// 64-bit reinterpretation of garbage stack bytes routinely
+			// exceeds that -- a bare number here would silently lose
+			// precision under double-based parsers (JS JSON.parse, older
+			// jq). slot/i32/u32 stay bare numbers since their full range
+			// fits well within 2^53.
 			std::ostringstream line;
 			line << "{\"slot\":" << i
 				<< ",\"i32\":" << i32
 				<< ",\"u32\":" << u32
-				<< ",\"i64\":" << i64
+				<< ",\"i64\":\"" << i64 << "\""
 				<< ",\"f32\":";
 			if (std::isfinite(f32))
 				line << f32;
