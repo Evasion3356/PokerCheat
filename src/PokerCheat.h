@@ -45,20 +45,6 @@ namespace PokerCheat
 	// author to see the screen. See docs/JOURNAL.md.
 	void ToggleCalibrationGrid();
 
-	// Diagnostic: draws a handful of comparison text lines testing
-	// whether RDR2's "COLOR_STRING" text-template type (as opposed to
-	// "LITERAL_STRING", which every other line this mod draws uses) and
-	// embedded Scaleform-style HTML tags (<FONT FACE=...>, <B>, etc.)
-	// actually render differently -- i.e. whether a real RDR2 font/style
-	// is reachable from GAMEPLAY::CREATE_STRING at all, as opposed to
-	// LITERAL_STRING's single fixed font every other line in this file is
-	// stuck with. See docs/JOURNAL.md for the research trail (forum
-	// reports only, nothing independently confirmed working yet -- this
-	// is what actually settles it). Wired to the F10 menu's "Toggle Font
-	// Test" item -- draws regardless of Enabled/poker state, same as the
-	// calibration grid, so it can be checked anywhere in-game.
-	void ToggleFontTest();
-
 	// Diagnostic: finds poker_sp's running scrThread and logs the
 	// confirmed Table struct's key fields (board header/reveal count,
 	// seats header, every seat's hole cards) to PokerCheat.log. Wired to
@@ -98,5 +84,23 @@ namespace PokerCheat
 	// "Probe Community Card Objects" item -- run with at least the flop
 	// revealed so there's a real object to test against.
 	void ProbeCommunityCardObjects();
+
+	// Diagnostic: dumps EVERY script-local slot of poker_sp's running
+	// thread to a timestamped PokerCheat_stackdump_YYYYMMDD_HHMMSS.jsonl
+	// file (see GamePointers::DumpLocalStackJsonl) -- one JSON object per
+	// slot, all of i32/u32/i64/f32/hex, no assumption about what any slot
+	// means. Ported from BlackjackCheat's equivalent tool (see that
+	// project's docs/JOURNAL.md, Session 6) for the same reason it was
+	// built there: when a probe shows a field reading garbage, grepping/
+	// jq-ing a wide raw dump for the expected value (a known rank/suit,
+	// bet amount, etc.) converges faster than re-guessing one candidate
+	// offset at a time -- and a before/after diff across a known state
+	// change (a card dealt, a bet placed) separates the one real
+	// persistent field from short-lived look-alike scratch values
+	// elsewhere on the stack. Wired to the F10 menu's "Dump Full Stack
+	// JSONL" item. Filenames are timestamped so consecutive dumps (e.g.
+	// "before"/"after" a known change) each land in their own file
+	// instead of the later one clobbering the one a diff needs.
+	void DumpFullStackJsonl();
 #endif
 }

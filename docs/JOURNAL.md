@@ -2178,3 +2178,106 @@ covers the logger's format-string correctness, but not, e.g., whether
 spdlog's file sink behaves correctly under ScriptHookRDR2's actual
 process/fiber environment; that's the first thing to check next session
 if `PokerCheat.log` doesn't show up next time the mod is actually run.
+
+## Session 13: Dump Full Stack JSONL ported from BlackjackCheat; two new confirmed handState values; a live all-in hand traced end to end
+
+### Dump Full Stack JSONL
+
+Ported `BlackjackCheat`'s `GamePointers::DumpLocalStackJsonl()` (see that
+project's `docs/JOURNAL.md`, Session 6) over to this project verbatim in
+spirit -- two overloads (full stack, or an explicit `[startSlot,
+startSlot+count)` range) that dump every script-local slot of poker_sp's
+thread as one JSON object per line (`slot`/`i32`/`u32`/`i64`/`f32`/`hex`),
+no assumption about what any slot means. Adapted to this project's own
+(newer, stricter) conventions rather than copied byte-for-byte:
+`std::ofstream`/`std::ostringstream` instead of `fopen_s`/`fprintf`, and
+`const std::string&` instead of `const char*` for the output path.
+`PokerCheat::DumpFullStackJsonl()` wraps it with a timestamped
+`PokerCheat_stackdump_YYYYMMDD_HHMMSS.jsonl` filename (so consecutive
+before/after dumps never clobber each other) and is wired to the F10
+menu. While in there, also removed `ToggleFontTest()`/`DrawFontTest()`
+entirely (per user request, "we're done with that") -- that diagnostic's
+job was already done in Session 11 (confirmed `UIDEBUG::_BG_DISPLAY_TEXT`
+as the working real-font pipeline, now used unconditionally by
+`DrawSeatCardIcons()`/`DrawWinPredictionStatus()`), so it had no reason
+to keep existing.
+
+**Bug found and fixed in the new tool itself**: a garbage bit pattern
+read as a `float` frequently lands on NaN/Inf, and `operator<<` prints
+those as bare `nan`/`-nan`/`inf` tokens -- not valid JSON, and it broke
+every dump this session until worked around with a regex sanitize pass
+before parsing. Fixed by checking `std::isfinite(f32)` and writing
+`null` for the `f32` field instead (matching how every real JSON
+library serializes a non-finite float) when it isn't.
+
+### A theory that real log data disproved: `PredictionCheck` re-arming
+
+Reasoning from raw dumps alone (an early batch of 8, all taken via the
+dump tool with the advisor's `Enabled` flag OFF the whole time) suggested
+a real bug: `PredictionCheck`'s "new hand" snapshot
+(`PokerCheat.cpp` ~line 979) only re-arms
+`if (revealCount == 0 && deckCursor != s_preflopCursorSnapshot)`, and
+every dump showed preflop `deckCursor` as exactly `2 * occupied seats`
+(12, for a stable 6-seat table) in EVERY hand -- so the theory was that
+after hand 1, the condition would never trip again and the whole
+self-check would go silent forever. This was **wrong**, and the user
+correctly pushed back for real evidence rather than accepting the
+theory: once actually toggled on (F10 -> "Toggle Poker Cheat" is a
+SEPARATE menu item from "Dump Full Stack JSONL" -- the dump tool reads
+memory directly and doesn't require `Enabled`, which was the real reason
+the first session's log had zero `PredictionCheck` lines despite a full
+hand playing out), the real log showed `deckCursor` passing through `0`
+as a brief transient between hands (deck reset, before the deal) before
+landing on `12` after the deal -- so "cursor changed since last
+snapshot" DOES trip every hand after all, just with an extra harmless
+"new hand" log line at the transient `cursor=0` moment (that snapshot
+always gets overwritten by the real `cursor=12` one before any showdown
+could compare against it). Two real hands, two real showdowns, both
+logged `MATCH`. Lesson: the earlier 8-dump batch never happened to
+sample the `cursor=0` transient purely because manual point-in-time
+dumps are not the same as watching every frame -- a sampling artifact,
+not a code bug. No fix made; `PredictionCheck` works as designed.
+
+### Two new confirmed `handState` values, traced through a live all-in hand
+
+A run of 6 dumps (`PokerCheat_stackdump_20260911_213745` through
+`_213828`, ~45 seconds apart) captured one full hand end to end,
+correlated against `PokerCheat.log`'s `PredictionCheck` lines from the
+same window:
+
+1. **213745** -- `handState=5` (preflop betting), all 6 seats `active`.
+   mySeat=1, hole `KC 3H`.
+2. **213756** -- same hand (`subStep` 26->35): seat 1 (you) shoved --
+   `stack` 99->0, `bet`->99. Seats 2/3/4 `FOLDED` (`seat.f_6`==1), seats
+   0/5 still `active`.
+3. **213801** -- `handState=8` (not previously confirmed): an all-in
+   fast-forward/showdown runout state. `reveal=5`, real board `QH KH 3D
+   10C 3S` exactly matches the predicted board (the `PredictionCheck ...
+   MATCH` logged at 21:37:58). Seats 0/1/5 all `ALL-IN` (`seat.f_6`==2);
+   seat 1's stack already shows 271, seats 0 and 5 dropped to 0 -- a
+   3-way all-in resolved and paid out within this single state.
+4. **213809** -- `handState=11` (not previously confirmed): a
+   between-hands state. `deckCursor`/`reveal` both reset to 0, but the
+   real board array still holds the previous hand's stale card values
+   (same staleness already documented in Session 6/CLAUDE.md -- harmless
+   since `BuildPredictedBoard()` gates on `revealCount`, never on the raw
+   -1 sentinel). Every seat's `state` field (`seat.f_6`) reads `-1` here
+   -- a distinct "no state assigned" sentinel for the between-hands gap,
+   separate from `seat.f_0`'s own -1-means-empty-seat convention.
+5. **213824** -- `handState=4` (hole cards just dealt, previously
+   confirmed), `deckCursor=8` (2*4, not 2*6): seats 0 and 5, having
+   busted to 0 chips last hand, now read `occ=-1` (`seat.f_0`) and are
+   gone from the table entirely -- **busting removes a seat**, not
+   previously confirmed. The remaining 4 seats get fresh hole cards
+   (yours: `8C JH`).
+6. **213828** -- `handState=5`/`subStep=26` again -- the new hand's
+   preflop betting begins, same fixed subStep-26 marker seen at the top
+   of every preflop phase so far.
+
+`handState` values now confirmed: `1`=waiting/sat down, `4`=hole cards
+dealt, `5`=preflop betting, `8`=all-in runout/showdown, `9`=postflop
+betting, `11`=between hands. No code changes made from this session's
+findings (nothing here contradicts current logic -- `isActive = (state
+== 0 || state == 2)` already correctly excludes the between-hands `-1`
+sentinel and busted-out `occ=-1` seats), purely new confirmed detail for
+future reference.

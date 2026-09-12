@@ -90,18 +90,11 @@ namespace PokerCheat
 
 #ifdef _DEBUG
 	bool CalibrationGridEnabled = false;
-	bool FontTestEnabled = false;
 
 	void ToggleCalibrationGrid()
 	{
 		CalibrationGridEnabled = !CalibrationGridEnabled;
 		Log::Write("PokerCheat::ToggleCalibrationGrid -> {}", CalibrationGridEnabled ? "ON" : "OFF");
-	}
-
-	void ToggleFontTest()
-	{
-		FontTestEnabled = !FontTestEnabled;
-		Log::Write("PokerCheat::ToggleFontTest -> {}", FontTestEnabled ? "ON" : "OFF");
 	}
 #endif
 
@@ -566,8 +559,8 @@ namespace PokerCheat
 
 			// (You Win)/(They Win)/(Tie) label directly below the icons,
 			// in a REAL RDR2 font -- $Font5 ("Redemption"), confirmed
-			// working by the user via DrawFontTest() row 8/9 (see that
-			// function's header comment for the full derivation: the
+			// working by the user via the now-removed DrawFontTest() F10
+			// diagnostic (see docs/JOURNAL.md for the full derivation: the
 			// plain UI::DRAW_TEXT/SET_TEXT_COLOR_RGBA natives this file
 			// uses everywhere else turned out to be nullsub on our build,
 			// UIDEBUG::_BG_DISPLAY_TEXT/_BG_SET_TEXT_COLOR -- added to
@@ -699,7 +692,7 @@ namespace PokerCheat
 			GRAPHICS::DRAW_RECT(x + width * 0.5f, y + height * 0.5f, width, height, kPanelR, kPanelG, kPanelB, kPanelA, 0, 0);
 		}
 
-		// Everything below, through the end of DrawFontTest(), is
+		// Everything below, through the end of DrawCalibrationGrid(), is
 		// Debug-only dev-tuning diagnostics wired to the F10 menu (see
 		// PokerCheat.h) -- no caller left anywhere in Release.
 
@@ -762,136 +755,6 @@ namespace PokerCheat
 			}
 		}
 
-		// See PokerCheat.h's ToggleFontTest() header comment. Every other
-		// line this mod draws uses GAMEPLAY::CREATE_STRING(10,
-		// "LITERAL_STRING", text) -- flags=10, template type
-		// "LITERAL_STRING".
-		//
-		// V1 of this test (COLOR_STRING + a guessed real font name like
-		// "TisaOffc") showed no visible difference on any row -- wrong on
-		// two counts, now corrected from real evidence: the user pulled
-		// actual string constants straight out of Rampage Trainer's
-		// binary (IDA, .rdata section), which really does draw RDR-style
-		// text. Those strings prove two things our guess got wrong:
-		//   - The FONT FACE value isn't a real font name at all -- it's a
-		//     SYMBOLIC TOKEN ($title1, $Font2, $Font5 all appear) that
-		//     presumably resolves against whatever font library is
-		//     already loaded for the current UI context, not a literal
-		//     font name like our old "TisaOffc" guess.
-		//   - Several of the strings are prefixed with `~s~` immediately
-		//     before the `<FONT FACE=` tag (e.g. `~s~<FONT FACE={0}>...`,
-		//     `{0}` being Rampage's OWN format-string placeholder, not
-		//     anything RDR2-native) -- classic Rockstar tilde-tag syntax,
-		//     possibly what actually switches the string into
-		//     tag-parsing mode, independent of (or instead of) the
-		//     COLOR_STRING template type this file guessed at before.
-		// Also confirmed: UI::DRAW_TEXT in our own SDK is hash
-		// 0xD79334A4BB99BAD1 -- the exact same native the forum called
-		// "_DISPLAY_TEXT", so this file was already calling the right
-		// native; nothing to change there.
-		//
-		// V2: tried the REAL display names ("RDR Lino", "RDR Gothica",
-		// etc., pulled from a second binary dump) directly as the FACE
-		// value -- also showed no visible difference on any row.
-		//
-		// V3: github.com/ExpMero/rdr2_fonts (user-supplied link) hosts the
-		// actual extracted .ttf files, each named `<index>_$<token>_<Real
-		// Name>.ttf` (e.g. `16_$title1_RDR Lino.ttf`), confirming the
-		// token<->real-name mapping -- but retesting those tokens through
-		// the SAME native pipeline as V1/V2 still showed no difference on
-		// any row.
-		//
-		// V4 (this version) is the actual fix, found by inspecting a real
-		// open-source menu base (github.com/Halen84/RDR2-Native-Menu-Base,
-		// user-supplied link) that genuinely does render RDR-style fonts.
-		// Its src/NativeMenuBase/UI/Drawing.cpp revealed the real problem:
-		// this file has been calling the WRONG GENERATION of native this
-		// whole time. UI::DRAW_TEXT (hash 0xD79334A4BB99BAD1) and
-		// UI::SET_TEXT_COLOR_RGBA (hash 0x50A41AD966910F03, natives.h:4750)
-		// are both documented in that project's own natives.h, in comments
-		// directly above those exact hashes, as nullsub/no-ops since game
-		// build 1436 -- our build (1491.50) is long past that. Their
-		// replacement (confirmed as what that project's own shipped,
-		// working code actually calls for any build newer than 1311,
-		// their BUILD_1311_COMPATIBLE flag defaults to 0) is
-		// UIDEBUG::_BG_DISPLAY_TEXT / UIDEBUG::_BG_SET_TEXT_COLOR -- added
-		// to ExtraNatives.h since the stock SDK doesn't declare the
-		// UIDEBUG namespace at all. Their DrawFormattedText() builds
-		// (paraphrased, see ExtraNatives.h and that project's source for
-		// the exact original):
-		//   <TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'>
-		//     <FONT FACE='$token' LETTERSPACING='0' SIZE='30'>~s~TEXT</FONT>
-		//   </P><TEXTFORMAT>
-		// still via GAMEPLAY::CREATE_STRING(10, "LITERAL_STRING", ...) --
-		// LITERAL_STRING was always the right template; COLOR_STRING
-		// (V1/V2's guess) was never it. Testing plain text through the
-		// new native pair first (row 2, no tags) to confirm the pair
-		// itself works before judging whether the FONT tag does too, then
-		// the tokens most likely to look obviously different if this
-		// works at all.
-		void DrawFontTest()
-		{
-			struct Row { const char* label; const char* content; bool useBgNative; };
-			constexpr Row kRows[] = {
-				{ "1) OLD pipeline baseline:", "The quick brown fox", false },
-				{ "2) NEW pipeline, no tags:", "The quick brown fox", true },
-				{ "3) NEW, FONT $title:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$title' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
-				{ "4) NEW, FONT $chalk:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$chalk' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
-				{ "5) NEW, FONT $ledger:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$ledger' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
-				{ "6) NEW, FONT $body1:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$body1' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
-				{ "7) NEW, FONT $catalog1:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$catalog1' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
-				{ "8) NEW, FONT $Font5:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
-				{ "9) NEW, FONT $gamername:", "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$gamername' LETTERSPACING='0' SIZE='30'>~s~Face test</FONT></P><TEXTFORMAT>", true },
-			};
-			constexpr int kRowCount = sizeof(kRows) / sizeof(kRows[0]);
-			constexpr float kFontTestX = 0.30f;
-			constexpr float kFontTestLabelWidth = 0.27f;
-			constexpr float kFontTestY = 0.18f;
-			constexpr float kFontTestLineHeight = 0.045f;
-			constexpr float kFontTestPanelPadding = 0.012f;
-
-			DrawPanel(kFontTestX - kFontTestPanelPadding, kFontTestY - kFontTestPanelPadding,
-				0.55f + kFontTestPanelPadding * 2.0f,
-				static_cast<float>(kRowCount + 1) * kFontTestLineHeight + kFontTestPanelPadding * 2.0f);
-
-			UI::SET_TEXT_SCALE(0.0f, 0.32f);
-			UI::SET_TEXT_COLOR_RGBA(kTitleR, kTitleG, kTitleB, kTitleA);
-			UI::SET_TEXT_CENTRE(0);
-			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
-			UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>("Font Test -- report which rows look different")), kFontTestX, kFontTestY);
-
-			float y = kFontTestY + kFontTestLineHeight;
-			for (int i = 0; i < kRowCount; i++)
-			{
-				UI::SET_TEXT_SCALE(0.0f, 0.26f);
-				UI::SET_TEXT_COLOR_RGBA(kTextR, kTextG, kTextB, kTextA);
-				UI::SET_TEXT_CENTRE(0);
-				UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
-				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(kRows[i].label)), kFontTestX, y);
-
-				if (kRows[i].useBgNative)
-				{
-					// New pipeline -- no SET_TEXT_SCALE/CENTRE/DROPSHADOW
-					// equivalent called here, matching Halen84's own
-					// DrawFormattedText() exactly (only _BG_SET_TEXT_COLOR
-					// before _BG_DISPLAY_TEXT -- size/alignment come from
-					// the TEXTFORMAT/FONT tag attributes baked into the
-					// content string itself, not a separate native call).
-					UIDEBUG::_BG_SET_TEXT_COLOR(140, 220, 255, 255);
-					UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(kRows[i].content)), kFontTestX + kFontTestLabelWidth, y);
-				}
-				else
-				{
-					UI::SET_TEXT_SCALE(0.0f, 0.30f);
-					UI::SET_TEXT_COLOR_RGBA(140, 220, 255, 255);
-					UI::SET_TEXT_CENTRE(0);
-					UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
-					UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(kRows[i].content)), kFontTestX + kFontTestLabelWidth, y);
-				}
-
-				y += kFontTestLineHeight;
-			}
-		}
 #endif // _DEBUG
 
 		constexpr std::size_t kHandEvalBufWords = 64;
@@ -1008,72 +871,33 @@ namespace PokerCheat
 			std::int32_t mySeat = ReadInt(thread, kF114SeatIndexSlot);
 
 			// Between-hands suppression via poker_sp's internal state
-			// fields (f_2010, f_2011, f_1.f_42, raw uLocal_14) was
-			// abandoned in Session 11 -- four different candidates tried,
-			// none held up under live testing. Reinstated via a different
-			// signal instead of another state-field guess: user observed
-			// that opponent seat card icons and win/lose labels ALREADY
-			// correctly vanish between hands, for a reason unrelated to
-			// any phase field -- they're gated on real hole-card data
-			// being valid (card0Rank >= 2 && card1Rank >= 2, same check
-			// the per-seat loop below uses), and hole-card memory itself
-			// reads as invalid (-1) once a hand ends, not just stale.
-			// That's a real, always-correct "is a hand actually in
-			// progress" litmus test -- use it here too, instead of only
-			// in the per-seat loop, so the predicted community board
-			// (which has no such per-seat validity check of its own,
-			// hence the stale-board-between-hands bug) gets suppressed
-			// the same way.
-			//
-			// OPPONENT seats only, not mySeat -- a live report showed the
-			// board/win-prediction still drawing between hands even after
-			// the first cut of this fix (which also counted mySeat), so
-			// the player's OWN hole cards apparently stay valid-looking
-			// in memory between hands even once every opponent's have
-			// gone invalid (same asymmetry noted elsewhere in this file:
-			// a folded seat's cards stay valid for the rest of THAT hand
-			// too -- the game clears seat card memory more conservatively
-			// than seat state). Opponent seat validity is the litmus test
-			// that's actually confirmed correct (it's what makes the seat
-			// icons/labels disappear on time), so mirror it exactly here
-			// rather than trusting mySeat's cards to mean the same thing.
-			//
-			// ALSO requires isActive (state == 0 || 2), matching the exact
-			// gate the per-seat icon draw uses below -- a second live
-			// report showed the board/(You Win) status STILL surviving
-			// between hands even with the card-validity check above, while
-			// the opponent icons themselves were correctly hidden. Root
-			// cause: a seat that folded during the previous hand keeps
-			// BOTH its stale hole cards AND its "folded" state (1) in
-			// memory until the next deal, so it fails the icon draw's
-			// isActive gate (correctly hidden) but was still passing this
-			// loop's card-only check (incorrectly counted as "hand in
-			// progress"). Checking isActive here too means this loop now
-			// counts a seat only when it would ALSO actually draw that
-			// seat's icon -- the same litmus test, not just a similar one.
-			bool handInProgress = false;
-			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
-			{
-				if (static_cast<std::int32_t>(seat) == mySeat)
-					continue; // opponents only -- see comment above
-
-				std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
-				if (ReadInt(thread, seatBase + 0) == -1)
-					continue; // unoccupied seat
-
-				std::int32_t state = ReadInt(thread, seatBase + 6);
-				if (state != 0 && state != 2)
-					continue; // folded/inactive -- see comment above
-
-				std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
-				std::int32_t c0Rank = ReadInt(thread, cardsBase + 0);
-				std::int32_t c1Rank = ReadInt(thread, cardsBase + 2);
-				if (c0Rank >= 2 && c1Rank >= 2)
-				{
-					handInProgress = true;
-					break;
-				}
-			}
+			// fields was abandoned in Session 11 -- four candidates tried,
+			// none held up live -- and reinstated in Session 13 via a
+			// hole-card-validity heuristic instead (see git history for
+			// that version). That heuristic is retired now that
+			// kF114HandStateSlot's own value range is confirmed directly
+			// from poker_sp.ysc.c's state-machine setter (func_213) and
+			// cross-checked against live dumps -- see docs/JOURNAL.md,
+			// Session 13. States 0-3 are one-time table-entry/launch
+			// states (never revisited once a session's first hand
+			// starts); 4-10 are the per-hand cycle (4=hole cards dealt,
+			// 5=preflop betting, 8=all-in runout, 9=postflop betting all
+			// confirmed live; 6/7/10 unconfirmed but grouped with 8/9 by
+			// poker_sp's own per-seat eligibility switch); 11-14 are
+			// between-hands/settlement (11=between hands confirmed live,
+			// 14=payout transitions directly into 11 in the decompile).
+			// [4, 10] would be the full "a hand is actually being played"
+			// range, but the upper bound is deliberately narrowed to 7
+			// here, excluding 8/9/10 (all-in runout/postflop betting) --
+			// user-confirmed live that this is exactly when the game
+			// shows its OWN hand-resolution text/UI, which this mod's
+			// overlay was sitting on top of and obscuring. Cutting the
+			// overlay at state 8 reveals that text, and it reappears
+			// showing the new hand's prediction the moment state 4 hits
+			// again -- confirmed live, this is the desired behavior, not
+			// a placeholder.
+			std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
+			bool handInProgress = (handState >= 4 && handState <= 7);
 
 			// Read once up front, reused for the predicted board, the
 			// "Upcoming" line, and the real "Board" line below.
@@ -1471,9 +1295,6 @@ namespace PokerCheat
 #ifdef _DEBUG
 		if (CalibrationGridEnabled)
 			DrawCalibrationGrid();
-
-		if (FontTestEnabled)
-			DrawFontTest();
 #endif
 
 		if (!Enabled)
@@ -1736,6 +1557,35 @@ namespace PokerCheat
 				}
 			}
 		}
+	}
+
+	void DumpFullStackJsonl()
+	{
+		auto thread = GamePointers::FindScriptThread(rage::Joaat("poker_sp"));
+		if (!thread)
+		{
+			Log::Write("DumpFullStackJsonl: poker_sp is not currently running");
+			return;
+		}
+
+		// Timestamped so consecutive dumps (e.g. "before the flop" / "after
+		// the flop") each land in their own file instead of the later one
+		// clobbering the one a diff needs to compare against.
+		SYSTEMTIME t;
+		GetLocalTime(&t);
+		std::ostringstream pathStream;
+		pathStream << "PokerCheat_stackdump_"
+			<< std::setfill('0')
+			<< std::setw(4) << t.wYear << std::setw(2) << t.wMonth << std::setw(2) << t.wDay
+			<< '_'
+			<< std::setw(2) << t.wHour << std::setw(2) << t.wMinute << std::setw(2) << t.wSecond
+			<< ".jsonl";
+		std::string outPath = pathStream.str();
+
+		if (GamePointers::DumpLocalStackJsonl(thread, outPath))
+			Log::Write("DumpFullStackJsonl: wrote {} -- grep/jq it for a known real value (e.g. a visible card's rank/suit, a bet amount) to find where it actually lives, then diff against a prior dump's file to see what actually changed", outPath);
+		else
+			Log::Write("DumpFullStackJsonl: failed, see prior log line for why");
 	}
 #endif // _DEBUG
 }

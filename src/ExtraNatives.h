@@ -13,8 +13,8 @@
 // UIDEBUG::_BG_DISPLAY_TEXT / _BG_SET_TEXT_SCALE / _BG_SET_TEXT_COLOR --
 // missing from the stock SDK entirely (no UIDEBUG namespace at all).
 //
-// Needed because the natives this file's DrawLine()/DrawFontTest()
-// otherwise use turned out to be the WRONG generation for our build:
+// Needed because the natives this file's DrawLine() otherwise use
+// turned out to be the WRONG generation for our build:
 // UI::DRAW_TEXT (hash 0xD79334A4BB99BAD1) is HUD::_DISPLAY_TEXT under a
 // different name, and UI::SET_TEXT_COLOR_RGBA (hash 0x50A41AD966910F03,
 // natives.h:4750) is HUD::_SET_TEXT_COLOR -- both are documented
@@ -27,8 +27,10 @@
 // guess. Per that project's DrawFormattedText(), this pair is also what
 // makes Scaleform-style rich text tags (<FONT FACE=...>, <P ALIGN=...>,
 // <TEXTFORMAT...>) embedded in a LITERAL_STRING actually get parsed
-// instead of printed literally -- the mechanism PokerCheat.cpp's
-// DrawFontTest() is testing. "Note: you must use VAR_STRING" per that
+// instead of printed literally -- the mechanism the now-removed
+// DrawFontTest() diagnostic proved out (see docs/JOURNAL.md), and what
+// DrawSeatCardIcons()/DrawWinPredictionStatus() now rely on for their
+// own real-font labels. "Note: you must use VAR_STRING" per that
 // project's own comment on _BG_DISPLAY_TEXT -- i.e. still call it via
 // MISC::VAR_STRING/GAMEPLAY::CREATE_STRING(flags, template, text) first,
 // same as every other DRAW_TEXT call in this file already does, just

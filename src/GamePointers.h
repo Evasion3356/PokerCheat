@@ -13,6 +13,8 @@
 #include "..\external\RDR-Classes\rage\atArray.hpp"
 #include "..\external\RDR-Classes\rage\joaat.hpp"
 
+#include <string>
+
 namespace GamePointers
 {
 	// Lazily resolves and caches the address of RDR2.exe's live script
@@ -40,4 +42,31 @@ namespace GamePointers
 	// pointers), since those structs live inline in the thread's own
 	// local array, not behind a separately-stored pointer.
 	void* GetScriptLocalAddress(rage::scrThread* thread, std::uint32_t index);
+
+	// Dumps every script-local slot of `thread` (or just [startSlot,
+	// startSlot+count) for the overload below) to a JSONL file at
+	// `outPath` -- one JSON object per line, every plausible
+	// interpretation of that slot's raw 8 bytes (i32/u32/i64/f32/hex),
+	// with NO theory about what any given slot means.
+	//
+	// Built to break out of the trace-a-theory / probe-it / re-trace-if-
+	// wrong loop this project's Probe* functions otherwise force one
+	// offset at a time -- when a probe shows a field reading garbage, the
+	// fastest way to find where the REAL data actually lives is to dump a
+	// wide raw window and grep/jq it for the expected value (a specific
+	// rank/suit pair, a known bet amount, etc.) rather than guess-and-
+	// recheck one candidate offset at a time. Ported from
+	// BlackjackCheat::GamePointers (see that project's docs/JOURNAL.md,
+	// Session 6, for the live before/after-diff methodology this tool is
+	// meant to support) -- generic, not poker-specific.
+	//
+	// The decompiled script's own f_N field names are exactly this
+	// dump's "slot" column minus whatever struct's base slot you already
+	// know (RDR2's script VM flattens nested struct fields to plain
+	// linear offsets, e.g. Table.f_23 IS the slot at kTableSlot+23) -- so
+	// a hit in the dump at slot S under a struct known to start at base B
+	// is directly "f_(S-B)" in the decompile, no further translation
+	// needed.
+	bool DumpLocalStackJsonl(rage::scrThread* thread, const std::string& outPath);
+	bool DumpLocalStackJsonl(rage::scrThread* thread, std::uint32_t startSlot, std::uint32_t count, const std::string& outPath);
 }
