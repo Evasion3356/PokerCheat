@@ -66,6 +66,7 @@
 #include "Log.h"
 #include "GamePointers.h"
 #include "Config.h"
+#include "Localization.h"
 #include "script.h"
 
 #include <sstream>
@@ -185,8 +186,8 @@ namespace PokerCheat
 	// Table.f_15/f_39) -- confirmed by func_185's own body indexing it
 	// directly with the raw seat number. See docs/JOURNAL.md Session 14
 	// (func_1628, the real decision engine this index feeds) and the
-	// PersonalityLabel() header comment below for the index->label
-	// mapping. Purely a fixed-per-seat read, no RNG/prediction involved
+	// kPersonalityLabels header comment in Localization.cpp for the
+	// index->label mapping. Purely a fixed-per-seat read, no RNG/prediction involved
 	// (unlike the abandoned fold-prediction feature, Session 17).
 	constexpr std::uint32_t kPersonalityIndexBase = kLocalStructIndex + kFieldOffsetF114 + 2655 + 90;
 
@@ -322,48 +323,12 @@ namespace PokerCheat
 			}
 		}
 
-		// Maps a seat's personality index (kPersonalityIndexBase[seat],
-		// 0-14) to a human-readable style label. Traced from poker_sp.ysc.c
-		// func_584's 15 func_1191(table, index, p1, p2, styleCode) calls
-		// (lines 25441-25455): styleCode is 0 for indices 0-8 (all of them
-		// route to func_1628, the real equity-driven decision engine, see
-		// docs/JOURNAL.md Session 14) and 1-6 for indices 9-14 (the
-		// card-blind archetypes -- calling station/all-in-shover/
-		// unconditional-all-in/push-fold/pot-cap-gate). For indices 0-8,
-		// p1 selects a "how much do I trust my equity read" multiplier
-		// from f_9 ({1.25, 1.0, 0.8} for p1={0,1,2} -- confirmed via
-		// func_584 lines 25456-25458, so p1=0 is Loose, p1=2 is Tight) and
-		// p2 selects a bet-size-range row from f_13 (three 10-float rows,
-		// lines 25459-25488, each row consistently larger than the last --
-		// so p2=0 is Passive, p2=2 is Aggressive). The only indices
-		// func_185 (the actual seat-fill assignment, line 8975,
-		// `GET_RANDOM_INT_IN_RANGE(5, 8+1)`) ever hands to a real seat are
-		// 5-8 -- the four corner combinations of that grid -- so those are
-		// the only labels that should ever actually appear at a normal
-		// table; the rest are filled in for completeness/robustness in
-		// case this index ever reads something else.
-		const char* PersonalityLabel(std::int32_t personalityIndex)
-		{
-			switch (personalityIndex)
-			{
-				case 0: return "Neutral";
-				case 1: return "Tight";
-				case 2: return "Loose";
-				case 3: return "Aggressive";
-				case 4: return "Passive";
-				case 5: return "Loose-Passive";
-				case 6: return "Tight-Passive";
-				case 7: return "Loose-Aggressive";
-				case 8: return "Tight-Aggressive";
-				case 9: return "Calling Station";
-				case 10: return "All-In Shover";
-				case 11: return "Always All-In";
-				case 12: return "Calling Station";
-				case 13: return "Push/Fold";
-				case 14: return "Pot-Cap Gate";
-				default: return "";
-			}
-		}
+		// Opponent personality/style labels ("Tight-Aggressive" etc.) now
+		// live in Localization.cpp's kPersonalityLabels (one row per
+		// supported language) -- see that file for the full derivation
+		// comment (traced from poker_sp.ysc.c's func_584/func_1191/
+		// func_185) this function used to carry. Callers use
+		// Localization::PersonalityLabel(personalityIndex) directly.
 
 		const char* HandCategoryName(std::int32_t category)
 		{
@@ -571,7 +536,7 @@ namespace PokerCheat
 		// comparison available (e.g. opponent inactive/folded, or you
 		// have no hand) -- suppresses the win/lose half of the label.
 		// personalityLabel: empty string suppresses the personality half
-		// (see PersonalityLabel()/ShowOpponentPersonality) -- the two
+		// (see Localization::PersonalityLabel()/ShowOpponentPersonality) -- the two
 		// halves are independent, either can show without the other.
 		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, const char* personalityLabel)
 		{
@@ -645,7 +610,7 @@ namespace PokerCheat
 			bool showVsMe = Config::Get().ShowWouldWinHandAgainst && vsMeResult != 2;
 			if (showPersonality || showVsMe)
 			{
-				const char* vsLabel = (vsMeResult > 0) ? "(You Win)" : (vsMeResult < 0) ? "(They Win)" : "(Tie)";
+				const char* vsLabel = Localization::VerdictLabel(vsMeResult);
 				int labelR = showVsMe ? ((vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 255 : 255) : 235;
 				int labelG = showVsMe ? ((vsMeResult > 0) ? 255 : (vsMeResult < 0) ? 110 : 230) : 222;
 				int labelB = showVsMe ? ((vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 110 : 140) : 194;
@@ -701,7 +666,7 @@ namespace PokerCheat
 				return;
 
 			int result = !anyOpponent ? 1 : (worstResult > 0 ? 1 : worstResult == 0 ? 0 : -1);
-			const char* label = (result > 0) ? "(You Win)" : (result < 0) ? "(They Win)" : "(Tie)";
+			const char* label = Localization::VerdictLabel(result);
 			int r = (result > 0) ? 140 : (result < 0) ? 255 : 255;
 			int g = (result > 0) ? 255 : (result < 0) ? 110 : 230;
 			int b = (result > 0) ? 140 : (result < 0) ? 110 : 140;
@@ -1161,7 +1126,7 @@ namespace PokerCheat
 				std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
 
 				std::int32_t personalityIndex = ReadInt(thread, kPersonalityIndexBase + seat);
-				const char* personalityLabel = PersonalityLabel(personalityIndex);
+				const char* personalityLabel = Localization::PersonalityLabel(personalityIndex);
 
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 

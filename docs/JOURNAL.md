@@ -2852,3 +2852,95 @@ existing win/lose tag).
 - Indices 9-14's real assignment path (same open question carried over
   from Session 14) still not found -- only matters if a named story
   character's poker behavior needs this label to make sense.
+
+## Session 19 -- localizing the HUD's on-screen text
+
+Scoped down first: grepped every `DRAW_TEXT`/`_BG_DISPLAY_TEXT` call site
+and found only two strings a Release build ever actually shows a player --
+the (You Win)/(They Win)/(Tie) verdict wording (`DrawSeatCardIcons()`'s
+tag and `DrawWinPredictionStatus()`'s standalone readout both had their
+own identical hardcoded copy) and `PersonalityLabel()`'s 14 opponent
+style tags. Everything else text-shaped in this file (`HandCategoryName()`,
+the whole seat/board debug panel) is `#ifdef _DEBUG`-only -- confirmed via
+`script.cpp`: the F10 menu itself, including the "Toggle Poker Cheat" item
+that's the only way to turn the mod on/off, is Debug-only too (Release
+self-enables via `PokerCheat::SetEnabled(true)` in `ScriptMain`) -- so none
+of that is player-facing and stays English-only.
+
+### Language detection
+
+Checked `rdr3-nativedb-data/natives.json` for `LANGUAGE::_GET_CURRENT_LANGUAGE_ID()`
+(hash `0xDB917DA5C6835FCC`, already correctly declared in the stock SDK's
+`natives.h`): its own comment documents the exact 13 languages RDR2 ships
+with (0=en-US, 1=fr-FR, 2=de-DE, 3=it-IT, 4=es-ES, 5=pt-BR, 6=pl-PL,
+7=ru-RU, 8=ko-KR, 9=zh-TW, 10=ja-JP, 11=es-MX, 12=zh-CN). Used that as the
+default language source -- matches whatever the player already has RDR2's
+own UI set to, no config needed -- with `PokerCheat.ini`'s new `[General]
+Language` key (`Config::Values::Language`, default `"auto"`) as an
+explicit override for anyone who wants the HUD in a different language
+than their game UI.
+
+Side finding, not acted on: the stock SDK's neighboring stub
+`LANGUAGE::_GET_USER_LANGUAGE_ID()` (hash `0x76E30B799EBEEA0F`) is
+mismapped -- nativedb shows that hash is actually
+`LOCALIZATION_GET_SYSTEM_DATE_TYPE`, not a language getter. Left it alone
+(unused) rather than "fixing" it in `ExtraNatives.h`, since
+`_GET_CURRENT_LANGUAGE_ID` alone is all this feature needs.
+
+### Implementation
+
+New `Localization.h/.cpp`: a `Language` enum mirroring the native's 13
+index values, `Refresh()` (resolves the ini override or falls back to the
+native, same "resolve once, cache" pattern `Config::Get()`'s `g_loaded`
+bool already uses -- see `Current()`), `VerdictLabel(vsResult)`, and
+`PersonalityLabel(personalityIndex)`. `PersonalityLabel()`'s old
+derivation comment (the `func_584`/`func_1191`/`func_185` trace from
+Session 14/18) moved from `PokerCheat.cpp` to sit above `Localization.cpp`'s
+`kPersonalityLabels` table, which it now actually documents.
+
+One real gotcha caught before it shipped: `Localization::Refresh()` calls
+a real game native, so -- unlike `Config::Reload()`, which `main.cpp`'s
+header comment explicitly notes is safe from `DllMain` because it never
+touches game natives or script-hook state -- it must run from inside
+ScriptHookRDR2's own script fiber. Solved the same way `Config::Get()`
+avoids needing an explicit `DllMain` call at all: `Current()` lazily calls
+`Refresh()` on first use, and its first-ever call will always come from
+`OnTick()` (already running inside the fiber). The Debug F10 menu's
+"Reload Config" item was widened to a small `ReloadConfigAndLocalization()`
+wrapper in `script.cpp` so editing `PokerCheat.ini`'s new `Language` key
+live re-picks the language immediately, same live-tuning workflow as
+every other Config-backed value.
+
+Translated `kPersonalityLabels`/`kVerdictLabels` for all 13 languages
+in one pass (LLM-assisted, not reviewed by a native speaker per
+language) rather than starting with only a few -- if a wording turns out
+wrong, fix that language's row directly in `Localization.cpp`, no other
+file needs to change. Kept several poker terms (Calling Station, All-In
+Shover, Push/Fold) as the English loanword in languages where that's
+genuinely how poker communities use them rather than forcing a literal
+translation.
+
+Confirmed the project's existing `/utf-8` `AdditionalOptions` (already
+present in both configs' compiler flags, `PokerCheat.vcxproj`) makes the
+Cyrillic/Korean/CJK string literals compile to correct UTF-8 bytes --
+checked directly by grepping the built `.asi` for known UTF-8 byte
+sequences (`Ничья`, `あなたの勝ち`, `跟注站`), all found intact. Both
+Debug and Release build clean; `PokerHandEvalTests` (untouched by this
+change) still `ALL PASS`.
+
+### Open questions
+
+- Not yet confirmed live in any non-English language: whether the fixed
+  legacy font `UIDEBUG::_BG_DISPLAY_TEXT` actually renders through (see
+  `DrawWinPredictionStatus()`'s header comment -- no `SET_TEXT_FONT`
+  equivalent exists, and this pipeline was only ever proven out in
+  English) has glyph coverage for accented Latin, Cyrillic, or CJK at
+  all -- it may fall back to tofu/blank boxes for some or all of the
+  non-English rows above. Needs an actual in-game check per language
+  (force `PokerCheat.ini`'s `Language` override, one language at a
+  time) before trusting any of this beyond English.
+- Poker jargon translations (Calling Station, All-In Shover, Push/Fold,
+  Pot-Cap Gate especially) are a best-effort pass, not verified against
+  what real poker communities in each language actually call these --
+  worth a native-speaker review pass per language before calling this
+  fully "done" rather than "shipped and probably close."

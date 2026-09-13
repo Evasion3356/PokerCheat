@@ -17,12 +17,26 @@
 #include "Log.h"
 #include "PokerCheat.h"
 #include "Config.h"
+#include "Localization.h"
 
 namespace
 {
 #ifdef _DEBUG
 	MenuController g_menuController;
 	MenuBase* g_mainMenu = nullptr;
+
+	// Re-picks the active HUD language immediately after an ini edit,
+	// same live-tuning workflow as every other Config-backed value here
+	// -- Localization::Refresh() itself can't just be called from
+	// Config::Reload() directly (see Localization.h's header comment):
+	// it invokes a real game native, so it must run from inside
+	// ScriptHookRDR2's script fiber, same as this menu action already
+	// does.
+	void ReloadConfigAndLocalization()
+	{
+		Config::Reload();
+		Localization::Refresh();
+	}
 
 	void BuildMenu()
 	{
@@ -34,7 +48,7 @@ namespace
 		g_mainMenu->AddItem(new MenuItemAction("Probe Community Card Objects (see log)", PokerCheat::ProbeCommunityCardObjects));
 		g_mainMenu->AddItem(new MenuItemAction("Toggle Calibration Grid", PokerCheat::ToggleCalibrationGrid));
 		g_mainMenu->AddItem(new MenuItemAction("Dump Full Stack JSONL", PokerCheat::DumpFullStackJsonl));
-		g_mainMenu->AddItem(new MenuItemAction("Reload Config (see log)", Config::Reload));
+		g_mainMenu->AddItem(new MenuItemAction("Reload Config (see log)", ReloadConfigAndLocalization));
 		g_menuController.RegisterMenu(g_mainMenu);
 	}
 #endif
