@@ -126,6 +126,7 @@ namespace
 		g_values.ShowOthersCards = GetOr(general, "ShowOthersCards", defaults.ShowOthersCards);
 		g_values.ShowWinPrediction = GetOr(general, "ShowWinPrediction", defaults.ShowWinPrediction);
 		g_values.ShowWouldWinHandAgainst = GetOr(general, "ShowWouldWinHandAgainst", defaults.ShowWouldWinHandAgainst);
+		g_values.ShowOpponentPersonality = GetOr(general, "ShowOpponentPersonality", defaults.ShowOpponentPersonality);
 
 #ifdef _DEBUG
 		// Debug-only -- see Config.h's header comment on PanelX etc.
@@ -159,6 +160,7 @@ namespace
 		SetBool(general, "ShowOthersCards", g_values.ShowOthersCards);
 		SetBool(general, "ShowWinPrediction", g_values.ShowWinPrediction);
 		SetBool(general, "ShowWouldWinHandAgainst", g_values.ShowWouldWinHandAgainst);
+		SetBool(general, "ShowOpponentPersonality", g_values.ShowOpponentPersonality);
 
 #ifdef _DEBUG
 		// Debug-only -- see Config.h's header comment on

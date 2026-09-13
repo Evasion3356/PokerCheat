@@ -52,6 +52,16 @@ namespace Config
 		// equivalent tag in the debug text panel.
 		bool ShowWouldWinHandAgainst = true;
 
+		// Opponent personality/style label ("Tight-Aggressive" etc.),
+		// drawn on the same line as the (You Win)/(They Win)/(Tie) tag --
+		// see PokerCheat.cpp's PersonalityLabel()/kPersonalityIndexBase
+		// header comment for where this reads from and docs/JOURNAL.md
+		// Session 14 for how it was traced. Purely informational (no RNG
+		// involved, unlike the abandoned fold-prediction idea in Session
+		// 17) -- every seat's personality is a fixed value for as long as
+		// they're sitting there, read directly, not guessed.
+		bool ShowOpponentPersonality = true;
+
 #ifdef _DEBUG
 		// HUD text panel (the seat/board/verdict text block). Debug-only,
 		// same convention as Card2DIconBaseX/SeatCardIconBaseX below --

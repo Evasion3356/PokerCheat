@@ -2281,3 +2281,574 @@ findings (nothing here contradicts current logic -- `isActive = (state
 == 0 || state == 2)` already correctly excludes the between-hands `-1`
 sentinel and busted-out `occ=-1` seats), purely new confirmed detail for
 future reference.
+
+## Session 14 -- how the AI actually decides fold/call/raise (pure research, no code changes)
+
+User asked directly: how does `poker_sp` decide each AI opponent's
+fold/call/raise, and is it live/deterministic-from-cards or predetermined.
+Traced this end to end in the ground-truth decompile
+(`poker_sp.ysc.c`); `act_gen_poker.ysc.c`/`poker_launch_sp.ysc.c` never
+needed -- everything is self-contained in `poker_sp.ysc.c`, same as every
+other system traced so far. No source changed this session, research only.
+
+### The dispatcher: one seat, one personality index, up to 6 decision functions
+
+`func_1255` (line 43972) is the per-seat decision entry point, called from
+`func_666` (line 26789) as
+`func_1255(&(uParam0->f_114.f_2655), uParam1, uParam2,
+uParam0->f_114.f_2655.f_90[uParam1->f_6])` -- i.e. the 4th argument is
+`f_2655.f_90[seat]`, a per-seat **personality index** (0-14) into a fixed
+15-entry table built once by 15 back-to-back `func_1191(table, index,
+p1, p2, styleCode)` calls (lines 25441-25455). `func_1255` switches on
+that entry's `styleCode` (`.f_2`) and dispatches to one of six distinct
+decision implementations:
+
+- `styleCode` 1 or 4 -> `func_1623` (line 52540): **mechanically calls
+  whatever's owed, full stop.** `num = tableCurrentBet - seatAlreadyIn;
+  func_1704(..., num)`. No hand-eval read, no equity read, no randomness
+  -- a pure "calling station" that plays every hand to showdown
+  regardless of its actual cards.
+- `styleCode` 2 -> `func_1624` (line 52548): pushes `stack + currentBet`
+  (i.e. shoves), scaled by a stakes-tier-dependent random fraction
+  (tier 0: `stack * random(0.225, 0.333)`; tiers 1-3: `stack * 1.0`, i.e.
+  a full shove at real-money tables). Also card-blind -- no equity, no
+  hand-rank read anywhere in this function.
+- `styleCode` 3 -> `func_1625` (line 52582): `num = stack;
+  func_1704(..., num)` -- **unconditional all-in, every decision point,
+  no exceptions.** Also card-blind.
+- `styleCode` 5 -> `func_1626` (line 52590): a short-stack push/fold
+  hybrid -- if the seat's stack (`func_144`) is under 20 (chip units),
+  shove it (`func_1704(..., stack)`); otherwise defers entirely to
+  `func_1628` (below), the real engine.
+- `styleCode` 6 -> `func_1627` (line 52602): a pot-cap/table-limit gate
+  (compares seat stacks against `func_1259(table) + func_1705(table)`,
+  a max-buy-in-shaped pair of limits, specifically when any seat is
+  running the unconditional-shove personality 13 below) that either
+  forces a plain fold/check (`func_1707`) or a plain call/check
+  (`func_1706`), or falls through to `func_1628`.
+- default (`styleCode` 0, i.e. every personality actually seen at a
+  normal table -- see below) -> `func_1628` directly.
+
+**`func_1628` (line 52646) is the real, hand-aware decision engine** --
+the only one of the six that reads anything about the actual cards:
+
+- `num5 = coroutine.f_1[seat]` -- the **live per-seat Monte Carlo equity
+  float** `func_690` (Session 2, line 28182) refreshes continuously via
+  `MINIGAME::_0xEC819D612038EF4B`. This is the same equity value this
+  project's own `DrawOverlay()` win-probability advice is built on.
+- `unk`/`num4` -- a personality-specific multiplier and a 10-float
+  bet-sizing-range struct, looked up via
+  `table_f9[personality_f44[idx]]` / `table_f13[personality_f44[idx].f_1]`
+  (lines 52667-52668) -- i.e. every personality has its own fixed
+  "how much do I trust my equity read" multiplier and its own randomized
+  bet-size ranges, not shared constants.
+- `num6 = func_1708(equity * personalityMultiplier, clamped [0,1])` --
+  personality-adjusted equity, the actual "hand confidence" score.
+- `endRange = func_1709(...)` (line 55269) -- **a positional factor**:
+  fraction of currently-active seats that still have to act *after* this
+  seat before betting returns to the dealer/last-raiser marker. Later
+  position (fewer players left to act) yields a smaller "risk remaining"
+  number.
+- `endRange2` -- fraction of the seat's own stack that would remain after
+  calling the current bet (a stack-preservation/pot-commitment ratio).
+- `num7 = 0.7*random(0,endRange) + 0.3*random(0,endRange2); flag = num7 >
+  0.6` -- a **randomized "loose/aggressive this decision" roll**, weighted
+  mostly by table position and a little by stack commitment, not by
+  hand strength at all.
+- `num8` (the final confidence score fed into every action threshold
+  below) is a stakes-tier-dependent (`switch(table.f_2)`, cases 0-3 --
+  this also resolves the long-standing "what is `Table.f_2` really"
+  question from Session 2/3: it **is** the stakes tier after all, just
+  0-indexed with 0 being the zero-stakes practice table, matching
+  `func_67`'s 4-constant stakes switch exactly) weighted blend of
+  `endRange` (position) and `num6` (equity), with the blend ratio
+  flipped by the `flag` roll above and tilted further toward pure equity
+  (up to 100% at tier 3, `flag==false`) at higher stakes -- i.e. **real
+  money tables lean more on actual hand strength and less on
+  positional/random aggression than the free table does.**
+- The actual fold/check/call/raise choice is a threshold ladder on
+  `num8`, gated by opponent-count-scaled cutoff tables (`func_1712`/
+  `func_1713`/`func_1718`, each a 7-float array indexed by
+  `func_665(table)` = active-seat count, line 55331 onward): below the
+  lowest cutoff -> fold-or-check (`func_1707`); below the next cutoff and
+  call-amount is under half the stack -> a randomly-sized bet/raise using
+  the personality's own size range (`func_1715`/`func_1716`, which do
+  `stack_or_owed * random(rangeLo, rangeHi)`, ceil'd); a middle band gated
+  by another random roll (`func_1717`, `<=0.4` -> more aggression) that
+  also gets a randomized bet/raise; otherwise a plain call
+  (`func_1719`->`func_1704` action 3) or, at the very top of the
+  confidence ladder, the biggest randomized raise range
+  (`func_1716` with the personality's own top-tier size bounds).
+  `func_1704` (line 55189, the single shared bet/raise/call/check
+  executor every path above eventually calls) sets the actual output
+  action code: **2=raise/bet, 3=call, 4=check, 5=fold** (confirmed from
+  `func_1707`/`func_1711`/`func_1719`'s own literal assignments), clamping
+  the requested raise size through `func_1757` (min-raise/stack clamp,
+  not traced further -- not needed for this question) first.
+
+### Personality assignment: fixed per seat-occupancy, not per-hand
+
+`func_185` (line 8975) is what actually assigns `f_90[seat]` (the
+personality index `func_1255` looks up) -- called once when a seat is
+filled, **only ever picks a value in [5, 8]** via
+`GET_RANDOM_INT_IN_RANGE(5, 9)`, re-rolling until it lands on whichever of
+those four indices is currently least-represented at the table (a
+load-balancing loop, not a plain reroll-until-different). All four of
+those (`func_1191(table, 5, 0,0,0)`, `(6, 2,0,0)`, `(7, 0,2,0)`,
+`(8, 2,2,0)`, lines 25446-25449) have `styleCode 0` -- i.e. **every
+regular AI opponent at a normal table uses the real equity-driven
+`func_1628` engine**, differing only in which of a 2x2
+tight/loose x passive/aggressive parameter combination (the `(p1,p2)`
+pair feeding `f_9`/`f_13` in `func_1628`) they were randomly dealt when
+they sat down. Personality indices 0-4 and 9-14 (the card-blind
+call-station/all-in-shover/short-stack-hybrid archetypes decoded above)
+exist in the same 15-entry table but are never reached by `func_185`'s
+random-fill path -- they're presumably wired up elsewhere for
+scripted/story-specific NPCs (not chased down this session, out of scope
+for "how does the AI at a normal table decide").
+
+### Direct answer
+
+**Every ordinary AI opponent's fold/call/raise choice is computed live,
+at the moment of the decision, from that hand's actual current equity**
+(`func_690`'s continuously-refreshed Monte Carlo win% against the real
+hole cards + whatever board is currently revealed) **blended with a
+fixed-per-seat personality profile and randomized positional/aggression
+noise on top -- nothing about the outcome is decided in advance.**
+Randomness here is layered *on top of* the real hand-strength signal
+(as tie-breaking noise in the confidence score, and as bet-size
+variance within a chosen action), never a replacement for it, and
+consistent with Session 5's separate finding that the AI's own equity
+math deliberately doesn't peek at the deterministic future deck even
+though it's sitting there in memory. The one caveat: a handful of
+special-case personality slots (0-4, 9-14) are wired to be genuinely
+card-blind/scripted (always-call, always-shove, stack-threshold
+push/fold) -- but the normal random seat-fill path used at a real table
+(`func_185`) never assigns any of those, so in practice every opponent
+you actually sit against is running the reactive equity engine.
+
+### Open questions
+
+- Personality indices 0-4 and 9-14's actual assignment path (presumably
+  a specific-NPC/mission-scripted call site somewhere, not found this
+  session) -- only matters if a named story character's poker behavior
+  ever needs explaining.
+- `func_1757` (raise-size clamp) and `func_1259`/`func_1705` (the
+  pot-cap constants `func_1627` compares stacks against) not traced in
+  detail -- neither affects the fold/call/raise decision logic itself,
+  only exact bet-size clamping/edge-case gating.
+
+## Session 15 -- is the engine RNG behind fold/call/raise predictable? (pure research, no code changes)
+
+Follow-on from Session 14: user asked whether `MISC::GET_RANDOM_INT_IN_RANGE`/
+`GET_RANDOM_FLOAT_IN_RANGE` -- the two natives `func_1628`'s confidence-score
+noise roll and bet-size variance are built on -- are deterministic/predictable,
+and whether a seed could be recovered. This is a native's *implementation*
+question, not a script-source one: `poker_sp.ysc.c`/`act_gen_poker.ysc.c` only
+call the native by hash, the real logic is x64 code inside `RDR2.exe` itself.
+Worked entirely in `D:\Backup\Stuff\RDR2 Shit\EXEs\1491.50\RDR2_Dumped.exe.i64`
+via headless `idat.exe -A -S<script.py>` runs (IDA Professional 9.3, per
+`..\CollectorOffline\CLAUDE.md`'s established workflow) -- one-off IDAPython
+scripts written to the scratchpad, each writing its own output file (`idat.exe`
+under `-A` batch mode prints nothing to stdout even on success, so every probe
+script writes its results to a file and that file is what actually gets read).
+
+### First: does poker_sp ever explicitly reseed? No.
+
+Grepped both `poker_sp.ysc.c` and `act_gen_poker.ysc.c` for `SEED`/
+`RANDOM_SEED` -- zero matches in either file. Whatever backs
+`GET_RANDOM_INT_IN_RANGE`/`GET_RANDOM_FLOAT_IN_RANGE` is never touched by the
+poker minigame itself; it's purely consuming the engine's own general-purpose
+stream, not a per-hand-seeded local one.
+
+### Dead ends chased in the binary
+
+- Function names/named locations containing `rand`/`mth`/`twist`/`xorshift`/
+  `well512`/`prng` (case-insensitive, both `idautils.Functions()` and
+  `idautils.Names()`): the *only* hit is the imported `BCryptGenRandom`
+  (`142ea0bc1`) plus a handful of unrelated string literals (`"RandSeed"`,
+  `"uiRandomNumberBehavior"`, `"RANDOM_TO_SCRIPT_CONVERSION"`, `"random"`,
+  `"GET_RANDOM_MODEL_FROM_POPULATION_SET"`, `"Random Events"`). This memory
+  dump has **no recovered RTTI/symbol name for an `mthRandom`-style class** --
+  unlike Session 2's IDA asks, there's no shortcut here from existing
+  debug-name recovery.
+- Decompiled every function each of those strings actually xrefs from,
+  hoping one would be "read RandSeed cvar -> seed the RNG": all dead ends.
+  `"RandSeed"` (`143658b88`) is read by `sub_142981650` alongside ~20 sibling
+  keys (`BoxSize`, `VelocityMin`, `MassExpModifier`, `BounceRandom`,
+  `WindMults`, ...) -- it's one field of a **particle-effect/VFX emitter
+  config struct**, not the engine's actual RNG seed, just a per-effect
+  override knob. `"uiRandomNumberBehavior"` (`14339ff80`) feeds a single
+  global dword (`sub_14003B34C`) -- a UI behavior flag, unrelated. `"random"`
+  (`1436a2eec`) is read as a named property off some data-driven object in
+  `sub_142E35900` (falls back to `sub_142DCF534` if absent) -- looks like
+  another FX/property-bag system, not chased further, low confidence it's
+  gameplay-relevant. `"RANDOM_TO_SCRIPT_CONVERSION"` (`1435f2ae8`) is a
+  telemetry/event tag string passed to what looks like a metrics-writer
+  call, unrelated to actual random generation.
+- Raw byte-scanned `.rdata`+`.data` for the literal QWORD native hashes
+  (`0xD53343AA4FB7DD28` = `GET_RANDOM_INT_IN_RANGE`, `0xE29F927A961F8AAA` =
+  `GET_RANDOM_FLOAT_IN_RANGE`, from `rdr3-nativedb-data/natives.json`): zero
+  hits, either direction. Confirms (as expected, same as GTA5) the native
+  hash table is **not** a plain `{hash, handler}` array stored verbatim --
+  it's obfuscated/rotated per build the same way GTA5's is, and/or built at
+  runtime via scattered `AddNativeHandler`-style registration calls rather
+  than sitting as static data. Finding the real dispatch table would need
+  the VM's `CALLNATIVE`-opcode handler traced first (to get the exact
+  obfuscation/lookup algorithm for *this* build) -- not attempted this
+  session, out of scope for the time available.
+- Byte-scanned all of `.text`/`.rdata`/`.data` for MT19937's two most
+  distinctive magic constants, `0x9908B0DF` (matrix-A twist constant) and
+  `0x9D2C5680` (tempering constant b): **zero hits for both**, anywhere in
+  the whole binary. This is strong negative evidence against a textbook
+  Mersenne Twister implementation -- a real MT19937 (seeding or tempering)
+  almost never avoids emitting these as literal immediates. (`0xEFC60000`,
+  MT's third tempering constant, did get 5 hits, all in `.data`, not code --
+  almost certainly coincidental floating-point/other data, not code using
+  it as an immediate.) Also checked common PCG64 and a Knuth-style
+  multiplicative xorshift constant -- zero hits for those too. Net result:
+  **whatever this engine's PRNG is, it isn't one of the well-known
+  textbook algorithms in a form recognizable by magic-constant scanning.**
+  Consistent with RAGE having its own bespoke `mthRandom`-style generator
+  (as multiple other RAGE-engine titles are reported to have, informally,
+  in modding-community writeups) rather than a stock library implementation
+  -- not confirmed by disassembly this session, just the most consistent
+  explanation for "real RNG, but no known-algorithm fingerprint."
+- Found and decompiled both of the binary's only two `BCryptGenRandom`
+  callers (`sub_14273D42C`, `sub_142E752A0`) -- Windows CNG's actual
+  cryptographic RNG, the one call worth checking as "maybe this seeds the
+  fast gameplay PRNG once at boot." Both are generic
+  `FillBufferWithSecureRandomBytes(buffer, size)`-shaped utility wrappers
+  (`sub_142E752A0` even opens/closes its own fresh `BCryptOpenAlgorithmProvider(L"RNG")`
+  handle **per call**, which no engine would do for a hot per-frame gameplay
+  dice roll -- native call sites for `GET_RANDOM_INT_IN_RANGE` alone number
+  in the hundreds across just `poker_sp.ysc.c`). `sub_14273D42C` has 5 call
+  sites, `sub_142E752A0` has 2, all in generically-named, unremarkable
+  functions -- consistent with this being a shared crypto/networking
+  utility (session tokens, key material, GUIDs) rather than the gameplay
+  RNG's seed source. **Ruled out** as the answer to "what seeds the dice
+  roll," not confirmed as anything poker-relevant.
+
+### What this actually establishes
+
+Nothing here overturns Session 14's finding that the AI's *decision* isn't
+predetermined -- if anything it reinforces it: there is no per-hand reseed
+anywhere in the script layer, so whatever stream `func_1628`'s noise rolls
+draw from is the same continuously-running engine-wide stream everything
+else in the game draws from (weather, ped behavior, loot, this exact same
+native used for hundreds of unrelated things) -- **one shared global stream,
+not a poker-specific one**, confirmed by there being a single native
+hash per random-range call with no seed/stream-selector parameter anywhere
+in any of the call sites traced across two sessions now.
+
+On the actual algorithm/predictability question, this session did not reach
+a conclusive answer -- every direct lead (name-based, string-based,
+magic-constant-based, hash-table-based) came up empty or ruled itself out,
+and the one solid remaining path (trace the VM's native-call opcode handler
+to recover this build's hash-table lookup/obfuscation scheme, then follow
+the recovered handler address for the two random-range natives to their
+real implementation) needs more time than this session had. **Practical
+bottom line as of right now: not shown to be predictable, but not shown to
+be unpredictable either** -- the architectural shape found (single shared
+engine-wide stream, never explicitly reseeded per hand, real crypto-RNG
+usage ruled out as irrelevant) is consistent with a typical fast
+deterministic PRNG seeded once at boot from *something* not yet identified,
+which -- if true -- would mean its live state is a real, readable, and
+forward-computable object somewhere in process memory (same category of
+target as the `ScriptThreads` array this project already reads at runtime)
+once actually located, rather than a value that needs "cracking" from a
+secret seed. That's a hypothesis this session raises, not a confirmed fact.
+
+### Open questions
+
+- The VM's `CALLNATIVE` opcode dispatcher / native-hash-to-handler lookup
+  for this exact build was never traced -- this is the actual blocking
+  prerequisite for reaching `GET_RANDOM_INT_IN_RANGE`/
+  `GET_RANDOM_FLOAT_IN_RANGE`'s real implementation directly instead of by
+  inference. Likely findable the same way Session 2/3 found `ScriptThreads`
+  (an AOB signature into the interpreter loop), but no such signature was
+  in hand this session and none was derived.
+- If/when that handler is found: confirm the actual generator algorithm,
+  whether its state is a single global object or one instance per script
+  thread/context, and whether that state's memory location is fixed enough
+  (or AOB-findable) to read live from an ASI -- this is what would actually
+  make "predict opponent N's next roll" tractable, not the algorithm ID
+  alone.
+- `sub_142DCF534`/`sub_142EA5834` (the "random" named-property fallback
+  pair found off `sub_142E35900`) were noted but not decompiled/chased --
+  low-confidence FX/property-bag lead, not re-visited after the stronger
+  `BCryptGenRandom` lead also turned out to be a dead end.
+
+## Session 16 -- the engine RNG cracked: algorithm, seed, and live state all found
+
+Direct follow-on to Session 15's open question. The user manually labeled
+the real functions in the IDA database themselves (`GET_RANDOM_INT_IN_RANGE`,
+`GET_RANDOM_FLOAT_IN_RANGE`, `GET_GAME_TIMER` as a calibration anchor) inside
+`D:\Backup\Stuff\RDR2 Shit\EXEs\1491.50\RDR2_Dumped.exe.i64`, which routes
+straight past Session 15's actual blocker (the obfuscated native hash table
+-- no longer needed once the target function is already named). Resolved
+each by name via `idc.get_name_ea_simple()` and decompiled with Hex-Rays
+through headless `idat.exe -A -S<script.py>` runs, same workflow as prior
+sessions. Calibration check passed first: `GET_GAME_TIMER` (RVA `0x104BF98`)
+decompiles to exactly `return (unsigned int)dword_1459B3930;` -- a plain
+static-DWORD read, matching the user's own description exactly, confirming
+the IDA-driving script and Hex-Rays are both working correctly on this
+database before trusting anything harder.
+
+### The algorithm: a 64-bit Marsaglia multiply-with-carry generator, one global instance
+
+`GET_RANDOM_INT_IN_RANGE` (RVA `0x104B0F8`) and `GET_RANDOM_FLOAT_IN_RANGE`
+(RVA `0x104B0B4`) are not thin wrappers around some deeper native -- their
+entire body **is** the RNG, inlined directly:
+
+```c
+// GET_RANDOM_INT_IN_RANGE(a1, a2):
+v2 = HIDWORD(qword_143E992B8) + 1557985959LL * (unsigned int)qword_143E992B8;
+qword_143E992B8 = v2;
+LODWORD(v2) = v2 & 0x7FFFFFFF;
+return a1 + (unsigned int)((v2 * (a2 - a1)) >> 31);
+
+// GET_RANDOM_FLOAT_IN_RANGE(a1, a2):
+qword_143E992B8 = HIDWORD(qword_143E992B8) + 1557985959LL * (unsigned int)qword_143E992B8;
+return (float)(qword_143E992B8 & 0x7FFFFF) * 0.00000011920929f * (a2 - a1) + a1;
+```
+
+This is a textbook **Marsaglia multiply-with-carry (MWC)** generator: treat
+the 64-bit state as `{low32, high32}`, and each step computes
+`newState = low32*A + high32` as a single 64-bit add (the carry out of the
+32x32 multiply naturally becomes the next `high32`) -- multiplier
+`A = 1557985959` (`0x5CDCFAA7`). The int variant takes the low 31 bits of
+the *new* state (sign bit cleared) and scales into `[a1,a2)`; the float
+variant takes the low 23 bits (mantissa-width) and scales the same way.
+**Both natives share the exact same single global state word,**
+`qword_143E992B8` (RVA `0x3E992B8`, in `.data`) -- confirmed by `XrefsTo()`
+on that address turning up only 10 functions total, and every single one of
+them (both natives, three unrelated internal helpers at RVAs `0x104375C`/
+`0x437B4`/`0x58F80`, and three "shuffle/sample without replacement"-style
+statistics helpers at RVA `0x250A820`/`0x250AAB0`/`0x250AC44`) performs the
+identical `HIDWORD(s) + A*LODWORD(s)` step against it. This nails down
+Session 15's "single shared engine-wide stream" finding as **literally one
+64-bit variable**, not just an architectural inference -- and confirms (via
+that same `XrefsTo` walk) `poker_sp.ysc.c`'s randomness and, e.g., weather/
+ped-behavior/loot randomness elsewhere in the game are drawing from exactly
+this one word, interleaved in whatever order those systems happen to call
+the native in.
+
+### Seeding: once at boot, from `QueryPerformanceCounter`, deterministically expanded -- but re-seedable too
+
+`sub_14014FAF0` (RVA `0x14FAF0`) is the boot-time initializer: calls
+`QueryPerformanceCounter(&PerformanceCount)` once, then feeds
+`PerformanceCount.LowPart` (the QPC counter's low 32 bits) into a shared
+seed-expansion helper, `sub_1425B6A94` (RVA `0x25B6A94`):
+
+```c
+sub_1425B6A94(_QWORD *state, unsigned int seed32) {
+    v2 = (seed32 + (seed32 == 0))
+       | ((seed32 ^ ROL32(seed32, 16)) << 32);
+    *state = HIDWORD(v2) + 1557985959LL * (unsigned int)v2;   // one MWC step
+}
+```
+
+i.e. the 32-bit seed is deterministically expanded into a 64-bit value (with
+a same-shape bit-mixing trick, never producing an all-zero low word) and then
+run through **one MWC step of the exact same algorithm** to produce the
+actual initial state -- fully deterministic given the seed, no extra entropy
+mixed in. `sub_14014FAF0` seeds *two* separate state words this way in the
+same call, `qword_143E992B8` (the shared RNG this session is chasing) and a
+second, apparently-independent one, `qword_143CE3C90` -- both from the exact
+same `QueryPerformanceCounter` read, not two different reads (not chased
+further -- out of scope, but worth knowing a sibling stream exists).
+
+There is also a genuine **re-seed entry point**, `sub_141058F80` (RVA
+`0x1058F80`): takes a caller-supplied 32-bit seed, runs the same
+`sub_1425B6A94` expansion against `qword_143E992B8` directly, and also
+resets three adjacent fields (`byte_143E992C0=0`, the qword pair at
+`+12`/`+16` = 0, `dword_143E992CC = 0xBF800000` i.e. **-1.0f**) -- that
+-1.0f is the classic "no cached Gaussian" sentinel pattern (Box-Muller-style
+generators cache one of the two independent normal deviates they produce
+per pair; -1.0f flags "cache empty"). This means the real RNG object is a
+small ~24-byte struct (`{u64 mwcState; u8 hasCachedGaussian; u32 pad; u64
+reserved; float cachedGaussianOrSentinel;}`) at base `qword_143E992B8`, not
+just a bare integer -- `GET_RANDOM_INT_IN_RANGE`/`FLOAT_IN_RANGE` only ever
+touch the first 8 bytes, but a Gaussian-flavored native (not looked for this
+session) almost certainly touches the rest. `sub_141058F80` has 3 real
+call sites (RVAs `0x47812`, `0x62601`, one more in a region IDA didn't
+resolve a containing function for) -- not traced to see whether any of
+these are reachable as a public script native (e.g. a `SET_RANDOM_SEED`-
+shaped one); out of scope for "is poker predictable," since Session 15
+already confirmed `poker_sp.ysc.c` never calls anything seed-shaped.
+
+### Verdict: yes, practically predictable -- with one real caveat
+
+This resolves Session 15's open hypothesis as **confirmed, not just
+plausible**: the generator is a simple, fully deterministic, linear
+recurrence over one 64-bit word sitting at a fixed, already-located
+address (`qword_143E992B8`, RVA `0x3E992B8` -- ASLR-relative but a plain
+static global, not something requiring a runtime allocation to chase) in
+the *same process* our own ASI already runs inside of. Reading that one
+qword at any moment gives everything needed to compute every subsequent
+`GET_RANDOM_INT_IN_RANGE`/`GET_RANDOM_FLOAT_IN_RANGE` output **exactly**,
+forward, indefinitely -- the output formulas above are pure bit-masking and
+scaling, fully invertible/forward-computable, nothing hashed or
+one-way about them. No seed-cracking is needed at all once the game is
+actually running and readable -- this is a "read the live variable" problem
+(same category as the `ScriptThreads` array and the deck cursor this
+project already reads), not a cryptographic one.
+
+**The one real caveat**: because it's confirmed to be *one global stream
+shared by the whole game* (Session 15's finding, now nailed down to the
+literal variable), any other system that happens to call
+`GET_RANDOM_INT_IN_RANGE`/`FLOAT_IN_RANGE` between the moment we read the
+state and the moment `func_1628`'s noise roll actually executes (weather,
+ped AI, animation timing, or poker's *own* other random draws -- e.g. the
+bet-size variance rolls that fire right alongside the fold/call/raise
+decision roll in the same function) will have advanced the state past
+whatever we predicted. Predicting a specific opponent's specific decision
+roll precisely therefore isn't just "read the qword once at hand start" --
+it needs either reading it immediately before the exact native call we
+care about (tight timing), or counting/replicating every intervening
+consumer's own draws, which is a real practical obstacle even though the
+math itself is now fully solved.
+
+### Open questions
+
+- `qword_143CE3C90`, the sibling state word seeded alongside
+  `qword_143E992B8` in `sub_14014FAF0` -- not chased. Could be a second
+  independent gameplay stream, or something narrower (replay/determinism-
+  specific); irrelevant to poker unless it turns out `func_1628`'s calls
+  route through it instead under some condition not yet observed.
+- The 3 call sites of the re-seed entry point `sub_141058F80` were not
+  decompiled -- would confirm whether it's reachable from script at all
+  (a public `SET_RANDOM_SEED`-style native) or purely an internal-engine
+  reset (e.g. replay/network-sync rewind).
+- Not measured empirically yet: how many *other* `GET_RANDOM_INT_IN_RANGE`/
+  `FLOAT_IN_RANGE` calls typically fire per frame from non-poker systems
+  while sitting at a poker table specifically -- this number is what
+  determines whether "read state, predict opponent's next roll" is
+  practically tight enough to act on, versus needing a same-instant read
+  right before the specific decision. Would need an in-game
+  instrumented-read test (log the qword on every poker-relevant frame and
+  diff against actual observed AI decisions), not a static-analysis
+  question.
+
+## Session 17 -- fold/call/raise prediction feature dropped
+
+User asked (after Session 14) whether a given bet size could be predicted
+to make a specific opponent fold. Sessions 14-16 chased this all the way
+down: `func_1628` (Session 14) is the real per-seat decision engine, its
+confidence score is a blend of live equity + personality + position + a
+randomized noise roll, and that roll's RNG (Sessions 15-16) turned out to
+be fully solvable in principle -- one global 64-bit Marsaglia
+multiply-with-carry word (`qword_143E992B8`), forward-computable exactly
+from a live read, no cryptography involved.
+
+**Decision: not pursuing this feature.** The blocker isn't the math, it's
+that `qword_143E992B8` is one stream shared by the entire game -- weather,
+ped AI, animation timing, and poker's *own* other random draws (bet-size
+variance rolling right alongside the fold/call/raise roll in the same
+`func_1628` call) all consume from it in whatever order those systems
+happen to fire. Predicting one specific opponent's specific roll requires
+either reading the state in the exact instant before that specific native
+call (not currently feasible from an external ASI tick, which runs at a
+coarser cadence than the game's own per-frame script scheduler) or
+correctly counting every intervening draw from every other system, which
+is not practically tractable. User's read on this ("flipping a coin would
+be more accurate than what you're proposing") is directionally right as
+an engineering call even though the generator itself isn't weak -- a
+correct-in-theory prediction that silently desyncs the moment any
+unrelated system rolls the same global counter is worse than no
+prediction at all, since it would confidently show a wrong number instead
+of admitting uncertainty. Threshold-ladder constants (`func_1712`/
+`func_1713`/`func_1718` cutoff tables, `func_1708`/`func_1709`/
+`func_1715`-`func_1719` helpers, all noted un-traced in Session 14) were
+never pulled for the same reason -- no longer useful without the RNG
+timing problem solved.
+
+Nothing to revert -- Sessions 14-16 were research-only, no code changes.
+The advisor HUD (live hand/equity display, Session 3 onward) is unaffected
+and remains the mod's actual feature set.
+
+## Session 18 -- opponent personality/style label, built on Session 14's dispatcher trace
+
+User asked for other feature ideas after Session 17 dropped fold
+prediction. Proposed a short list, all grounded in already-traced game
+state rather than new equity/RNG territory; user picked the cheapest one:
+show each opponent's AI personality/style (Loose-Aggressive,
+Tight-Passive, etc.) on the HUD -- Session 14 already found the field,
+this session just wired it up and pinned down the exact tight/loose x
+passive/aggressive meaning of each value.
+
+### Address confirmed via a literal call site, no parameter-identity tracing needed
+
+`func_185` (poker_sp.ysc.c line 8975) is the only function that ever
+writes a seat's personality index, and its one call site
+(line 5883) is `func_185(&(uLocal_14.f_114.f_2655), i)` -- `uLocal_14`
+appears verbatim, so this needed none of the multi-hop call-chain tracing
+Table's own address required back in Session 2/3. Absolute local slot:
+`14 (uLocal_14) + 114 (f_114) + 2655 (f_2655) + 90 (f_90) + seat` = 2873 +
+seat, seats 0-5 -> slots 2873-2878. `f_90` is a plain 0-based array (no
+leading size/count header word, unlike Table.f_15/f_39) -- confirmed by
+func_185's own body (`unk[uParam0->f_90[i]]`, `uParam0->f_90[iParam1] =
+j`) indexing it directly with the raw seat number, and independently by
+the reset loop at the end of func_584 (`for (i=0;i<6;i++)
+uParam0->f_90[i] = 0;`, line 25490-25492) doing the same.
+
+### Correcting Session 14's index range: 0-8 all route to the real engine, not just 5-8
+
+Re-reading func_584's 15 `func_1191(table, index, p1, p2, styleCode)`
+calls (lines 25441-25455) directly (rather than relying on Session 14's
+paraphrase) shows styleCode is 0 for **every** index 0-8, not just 5-8 --
+indices 9-14 are the ones carrying styleCodes 1-6 (the card-blind
+archetypes). So the full 0-8 range are all real, equity-driven `func_1628`
+personalities (Session 14 was right about which funcs the styleCodes
+dispatch to, just imprecise about which indices carry styleCode 0).
+`func_185` (the seat-fill assignment) still only ever rolls
+`GET_RANDOM_INT_IN_RANGE(5, 8+1)` -- i.e. only indices 5-8 ever actually
+reach a real seat -- so this doesn't change what a player will ever
+observe, just corrects the record on indices 0-4's actual nature (real
+personality-grid entries that are simply never rolled, not scripted NPC
+placeholders as previously guessed).
+
+The (p1, p2) pairs across indices 0-8 turn out to cover a complete 3x3
+grid over {0,1,2}x{0,1,2}: `p1` indexes `f_9` (`{1.25, 1.0, 0.8}` for
+p1={0,1,2}, set at lines 25456-25458) -- a personality-specific "how much
+do I trust my own equity read" multiplier feeding directly into
+`func_1628`'s confidence score (Session 14) -- so p1=0 inflates equity
+(**Loose**), p1=2 discounts it (**Tight**), p1=1 is neutral. `p2` indexes
+`f_13` (three 10-float bet-size-range rows, lines 25459-25488) -- every
+field of row 2 > row 1 > row 0 with only one minor exception (`.f_4`), so
+p2=0/1/2 is **Passive**/Neutral/**Aggressive** by bet-size-range
+magnitude. Indices 5-8 (`func_185`'s only real outputs) are exactly the
+four corners of that grid: 5=(0,0) Loose-Passive, 6=(2,0) Tight-Passive,
+7=(0,2) Loose-Aggressive, 8=(2,2) Tight-Aggressive.
+
+### Implementation
+
+`PokerCheat.cpp`: `kPersonalityIndexBase` constant (the slot math above),
+`PersonalityLabel()` (full 0-14 switch, though only 5-8 should ever
+actually appear at a table -- the rest filled in for robustness), and a
+new `Config::ShowOpponentPersonality` toggle (defaults on, `Config.h`/
+`.cpp`, same General-section pattern as `ShowOthersCards` etc.).
+`DrawSeatCardIcons()` gained a `personalityLabel` parameter and now
+shares its one label line between the personality tag and the existing
+(You Win)/(They Win)/(Tie) tag -- independently toggled, either can show
+without the other; when the win/lose half isn't showing, the line falls
+back to a neutral cream color instead of the win/lose green/red/yellow.
+Also appended to the Debug text panel's per-seat line (`[Tight-Aggressive]`
+etc.) for live verification against the real screen. Both Debug and
+Release configs compile clean; not yet run against a live game (RDR2 was
+running at the time, so the deploy copy step was skipped by the user's
+own choice -- next session or the user's own rebuild should confirm the
+label reads correctly and lands in a sane position relative to the
+existing win/lose tag).
+
+### Open questions
+
+- Not yet confirmed live: does `PersonalityLabel()` ever actually show
+  anything other than the four expected corner values (Loose-Passive/
+  Tight-Passive/Loose-Aggressive/Tight-Aggressive) at a real table --
+  would confirm `func_185`'s `[5,8]` range and this session's slot math
+  both hold up outside the decompile.
+- Indices 9-14's real assignment path (same open question carried over
+  from Session 14) still not found -- only matters if a named story
+  character's poker behavior needs this label to make sense.

@@ -175,6 +175,21 @@ namespace PokerCheat
 	constexpr std::uint32_t kHoleCardsDataOffset = kHoleCardsHeaderOffset + 1; // seat.f_7 real card data
 	constexpr std::uint32_t kSeatCount = 6;
 
+	// uLocal_14.f_114.f_2655.f_90[seat] -- each seat's AI personality
+	// index (0-14, into a fixed 15-entry style table func_584 builds once
+	// via 15 func_1191() calls). Confirmed via the ONE literal call site
+	// that actually assigns it, func_185 at poker_sp.ysc.c line 5883:
+	// `func_185(&(uLocal_14.f_114.f_2655), i)` -- no parameter-identity
+	// tracing needed here, uLocal_14 appears in the call verbatim. f_90
+	// is a plain 0-based array (no leading size/count header word, unlike
+	// Table.f_15/f_39) -- confirmed by func_185's own body indexing it
+	// directly with the raw seat number. See docs/JOURNAL.md Session 14
+	// (func_1628, the real decision engine this index feeds) and the
+	// PersonalityLabel() header comment below for the index->label
+	// mapping. Purely a fixed-per-seat read, no RNG/prediction involved
+	// (unlike the abandoned fold-prediction feature, Session 17).
+	constexpr std::uint32_t kPersonalityIndexBase = kLocalStructIndex + kFieldOffsetF114 + 2655 + 90;
+
 	// .f_606 -- the deck. Confirmed via func_589 (builds a plain,
 	// UN-prefixed 52-card array directly at the deck's own base -- 4
 	// suits x ranks 2-14, no leading size/count word the way f_15/f_39
@@ -304,6 +319,49 @@ namespace PokerCheat
 				case 2: return 'S'; // Spades
 				case 3: return 'C'; // Clubs
 				default: return '?';
+			}
+		}
+
+		// Maps a seat's personality index (kPersonalityIndexBase[seat],
+		// 0-14) to a human-readable style label. Traced from poker_sp.ysc.c
+		// func_584's 15 func_1191(table, index, p1, p2, styleCode) calls
+		// (lines 25441-25455): styleCode is 0 for indices 0-8 (all of them
+		// route to func_1628, the real equity-driven decision engine, see
+		// docs/JOURNAL.md Session 14) and 1-6 for indices 9-14 (the
+		// card-blind archetypes -- calling station/all-in-shover/
+		// unconditional-all-in/push-fold/pot-cap-gate). For indices 0-8,
+		// p1 selects a "how much do I trust my equity read" multiplier
+		// from f_9 ({1.25, 1.0, 0.8} for p1={0,1,2} -- confirmed via
+		// func_584 lines 25456-25458, so p1=0 is Loose, p1=2 is Tight) and
+		// p2 selects a bet-size-range row from f_13 (three 10-float rows,
+		// lines 25459-25488, each row consistently larger than the last --
+		// so p2=0 is Passive, p2=2 is Aggressive). The only indices
+		// func_185 (the actual seat-fill assignment, line 8975,
+		// `GET_RANDOM_INT_IN_RANGE(5, 8+1)`) ever hands to a real seat are
+		// 5-8 -- the four corner combinations of that grid -- so those are
+		// the only labels that should ever actually appear at a normal
+		// table; the rest are filled in for completeness/robustness in
+		// case this index ever reads something else.
+		const char* PersonalityLabel(std::int32_t personalityIndex)
+		{
+			switch (personalityIndex)
+			{
+				case 0: return "Neutral";
+				case 1: return "Tight";
+				case 2: return "Loose";
+				case 3: return "Aggressive";
+				case 4: return "Passive";
+				case 5: return "Loose-Passive";
+				case 6: return "Tight-Passive";
+				case 7: return "Loose-Aggressive";
+				case 8: return "Tight-Aggressive";
+				case 9: return "Calling Station";
+				case 10: return "All-In Shover";
+				case 11: return "Always All-In";
+				case 12: return "Calling Station";
+				case 13: return "Push/Fold";
+				case 14: return "Pot-Cap Gate";
+				default: return "";
 			}
 		}
 
@@ -511,8 +569,11 @@ namespace PokerCheat
 		// table, since every row shares the same X and steps by the same
 		// Y. vsMeResult: 1 = you win, -1 = they win, 0 = tie, 2 = no
 		// comparison available (e.g. opponent inactive/folded, or you
-		// have no hand) -- suppresses the label entirely.
-		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult)
+		// have no hand) -- suppresses the win/lose half of the label.
+		// personalityLabel: empty string suppresses the personality half
+		// (see PersonalityLabel()/ShowOpponentPersonality) -- the two
+		// halves are independent, either can show without the other.
+		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, const char* personalityLabel)
 		{
 			std::string cardSetDict;
 			if (!FindLoadedCardSetDict(cardSetDict))
@@ -570,18 +631,36 @@ namespace PokerCheat
 			// for this pipeline -- alignment comes from the <P ALIGN=...>
 			// tag inside the string itself, so this is left-aligned
 			// starting at the icon pair's left edge rather than centered.
-			if (Config::Get().ShowWouldWinHandAgainst && vsMeResult != 2)
+			//
+			// The personality half (e.g. "Tight-Aggressive") and the
+			// win/lose half share this one line, independently toggled --
+			// ShowOpponentPersonality/ShowWouldWinHandAgainst -- so either
+			// can appear without the other. When the win/lose half is
+			// showing, its color drives the whole line (matches the
+			// existing behavior exactly); otherwise a neutral cream tone
+			// is used, same tone DrawLine()'s Debug-only text panel uses
+			// elsewhere in this file, kept local here since that function
+			// isn't compiled into Release builds.
+			bool showPersonality = Config::Get().ShowOpponentPersonality && personalityLabel && personalityLabel[0] != '\0';
+			bool showVsMe = Config::Get().ShowWouldWinHandAgainst && vsMeResult != 2;
+			if (showPersonality || showVsMe)
 			{
-				const char* label = (vsMeResult > 0) ? "(You Win)" : (vsMeResult < 0) ? "(They Win)" : "(Tie)";
-				int labelR = (vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 255 : 255;
-				int labelG = (vsMeResult > 0) ? 255 : (vsMeResult < 0) ? 110 : 230;
-				int labelB = (vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 110 : 140;
+				const char* vsLabel = (vsMeResult > 0) ? "(You Win)" : (vsMeResult < 0) ? "(They Win)" : "(Tie)";
+				int labelR = showVsMe ? ((vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 255 : 255) : 235;
+				int labelG = showVsMe ? ((vsMeResult > 0) ? 255 : (vsMeResult < 0) ? 110 : 230) : 222;
+				int labelB = showVsMe ? ((vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 110 : 140) : 194;
+
+				std::string label = showPersonality ? personalityLabel : "";
+				if (showPersonality && showVsMe)
+					label += " - ";
+				if (showVsMe)
+					label += vsLabel;
 
 				float labelX = x + labelOffsetX;
 				float labelY = y + height + labelOffsetY;
 
 				std::string formatText = "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='30'>~s~"
-					+ std::string(label) + "</FONT></P><TEXTFORMAT>";
+					+ label + "</FONT></P><TEXTFORMAT>";
 
 				UIDEBUG::_BG_SET_TEXT_COLOR(labelR, labelG, labelB, 255);
 				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), labelX, labelY);
@@ -1081,6 +1160,9 @@ namespace PokerCheat
 				std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
 				std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
 
+				std::int32_t personalityIndex = ReadInt(thread, kPersonalityIndexBase + seat);
+				const char* personalityLabel = PersonalityLabel(personalityIndex);
+
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 
 				if (!handInProgress || card0Rank < 2 || card1Rank < 2)
@@ -1153,6 +1235,8 @@ namespace PokerCheat
 						<< (category >= 0 ? HandCategoryName(category) : "?")
 						<< " (stack " << stack << ", bet " << bet << ")"
 						<< stateLabel << shownVsMe << (isMe ? "  (You)" : "");
+					if (!isMe && personalityLabel[0] != '\0')
+						line << "  [" << personalityLabel << "]";
 				}
 				DrawLine(x, y, line.str().c_str());
 				y += kLineHeight;
@@ -1178,7 +1262,7 @@ namespace PokerCheat
 				{
 					int denseRow = denseRowForSeat[seat];
 					if (denseRow != 0)
-						DrawSeatCardIcons(denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult);
+						DrawSeatCardIcons(denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult, personalityLabel);
 				}
 			}
 
