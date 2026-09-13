@@ -3060,3 +3060,74 @@ framing, plus this entry and the `PITFALLS.md` addition.
 - None outstanding for font rendering -- closed. `$gamername`'s CJK
   failure specifically was noted but not root-caused; irrelevant unless
   this mod ever has a reason to use that token.
+
+## Session 22 -- spot-checking the personality-label translations against real poker-community usage
+
+User asked directly how confident the Session 19 translations actually
+were. Honest answer at the time: not very, for the poker-jargon
+personality labels specifically -- they were LLM-assisted guesses, never
+checked against how real poker communities in each language actually
+talk, and poker vocabulary is unusually loanword-heavy (many languages
+just keep "tight"/"loose"/"all-in" in English rather than translating),
+which is exactly the kind of thing a plausible-sounding literal
+translation gets wrong silently.
+
+Reprioritized before spending research effort: reread `PokerCheat.cpp`'s
+own `kPersonalityIndexBase` comment -- of the 15 personality values, only
+indices 5-8 (Loose-Passive/Tight-Passive/Loose-Aggressive/Tight-Aggressive,
+the four corners of the p1xp2 grid) can ever actually appear at a real
+seat; `func_185` never rolls anything else. So checked those four
+specifically, per language, via web search against real poker glossaries/
+forums/strategy sites, rather than spreading effort evenly across all 15
+values including several (Calling Station, All-In Shover, Push/Fold,
+Pot-Cap Gate) that are dead code paths in practice.
+
+Results, by language:
+
+- **German, Spanish/es-MX, Italian, Portuguese, Polish, Japanese,
+  Korean**: confirmed correct as shipped. All seven keep "Tight"/"Loose"
+  as English loanwords (e.g. German "tightes Spiel", Italian/Portuguese/
+  Polish article titles literally read "Tight Aggressive" in Latin
+  script, Japanese `タイト`/`ルース` and Korean `타이트`/`루즈` are
+  transliterations), exactly what Session 19 had already written.
+- **Russian**: confirmed correct as shipped -- real forum usage
+  (`nashpoker.net`, `academypoker.ru`) fully translates/transliterates
+  and hyphenates exactly the way this row already did (`Тайтово-
+  агрессивный`, `Лузово-пассивный`).
+- **French**: WRONG, fixed. Had translated "Tight"/"Loose" to "Serré"/
+  "Lâche"; real usage (`pokerstrategy.com/fr`, `caen-poker.com`) is
+  "tight-agressif" -- "Tight" kept in English same as every other
+  language, only the second half Frenchified.
+- **Chinese, both variants**: WRONG, fixed. Had used the generic word for
+  "aggressive" (`激进`/`激進`, closer to "radical/extreme"); real poker
+  terminology (`dpskill.com` for Simplified: "紧凶"/"松凶";
+  `monsterstack.com.tw` for Traditional: "緊兇"/"緊積極(緊兇)") uses the
+  specific poker-slang character `凶`/`兇` instead. "Passive" (`被动`/
+  `被動`) was already fine -- a legitimate near-synonym of the Traditional
+  source's alternate term `消極`.
+
+Applied both fixes directly to `kPersonalityLabels` in `Localization.cpp`,
+with the supporting citation left as a comment on each corrected row so
+a future reviewer doesn't have to re-derive where the correction came
+from. Rewrote the table's header comment to state the real confidence
+picture precisely instead of a blanket "LLM-assisted" disclaimer: indices
+5-8 across these ten languages are now web-search-checked, French and
+Chinese were caught and corrected, and everything else (indices 0-4/9-14,
+plus all 13 languages' `VerdictLabel` wording, which is plain vocabulary
+rather than jargon and was left unchecked as lower-risk) remains
+best-effort. Both Debug and Release rebuilt clean; spot-checked the new
+Chinese/French byte sequences directly in the built `.asi`, same
+verification method as Session 19.
+
+### Open questions
+
+- `VerdictLabel`'s wording (the "(You Win)" family) was never
+  web-search-checked, on the judgment call that it's plain vocabulary
+  rather than jargon and lower-risk than the personality labels -- still
+  only as confident in it as in any other LLM-generated translation.
+- The never-actually-shown personality values (indices 0-4, 9-14 --
+  Calling Station/All-In Shover/Always All-In/Push/Fold/Pot-Cap Gate)
+  remain unchecked. Low priority since `func_185` can't roll them at a
+  real table, but if that ever changes (or a named story character uses
+  one, the open question carried since Session 14/18), they'd need the
+  same treatment.
