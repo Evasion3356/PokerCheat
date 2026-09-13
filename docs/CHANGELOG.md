@@ -5,6 +5,22 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.2.0] - 2026-09-13
+
+### Added
+- Opponent personality/style HUD label: each opponent's fixed
+  Loose/Tight x Passive/Aggressive personality (read directly from
+  the seat's personality index, not predicted or RNG-derived) is now
+  shown next to their card icons. Gated by a new
+  `ShowOpponentPersonality` toggle in `PokerCheat.ini`.
+
+### Debug build
+- `Dump Full Stack JSONL` no longer risks silent precision loss on
+  64-bit values in its output -- raw `i64` stack reinterpretations are
+  now emitted as quoted strings instead of bare JSON numbers, since
+  they routinely exceed the 2^53 range double-based JSON parsers can
+  represent exactly.
+
 ## [1.1.0] - 2026-09-11
 
 ### Fixed
