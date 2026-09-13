@@ -5,7 +5,7 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
-## [Unreleased]
+## [1.3.0] - 2026-09-13
 
 ### Added
 - HUD localization: the (You Win)/(They Win)/(Tie) verdict tag and the
@@ -15,6 +15,20 @@ tracks what an end user experiences, not internal implementation history
   a new `Language` key under `PokerCheat.ini`'s `[General]` section
   (default `auto`) to force a specific language regardless of the
   game's own UI language.
+- The 4 personality labels that can actually appear at a real table
+  (Loose-Passive/Tight-Passive/Loose-Aggressive/Tight-Aggressive) were
+  checked against real poker-community usage in each language; French
+  and Chinese wording was corrected as a result (see `docs/JOURNAL.md`
+  Sessions 20-22 for the full trace and sources). The remaining
+  translations (verdict wording, and personality values that can never
+  actually be assigned to a real seat) are still best-effort and
+  unverified.
+
+### Debug build
+- Restored the "Toggle Font Test" F10 diagnostic (removed in 1.1.0),
+  now per-language via a new "Cycle Font Test Language" item -- used to
+  confirm the HUD's font choice renders correctly in all 13 languages,
+  including Chinese/Japanese/Korean.
 
 ## [1.2.0] - 2026-09-13
 
