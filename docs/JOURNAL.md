@@ -2944,3 +2944,59 @@ change) still `ALL PASS`.
   what real poker communities in each language actually call these --
   worth a native-speaker review pass per language before calling this
   fully "done" rather than "shipped and probably close."
+
+## Session 20 -- restored the font test, now per-language
+
+Directly follows Session 19's first open question: nothing had actually
+confirmed any font token has non-ASCII glyph coverage, so before trusting
+12 of the 13 new translations at all, brought back Session 11's font test
+diagnostic (`DrawFontTest`/`ToggleFontTest`, removed in the commit
+documented as "Replaced the 'Toggle Font Test' F10 diagnostic" once
+`$Font5` was confirmed for English -- see `git show bbc8d9d` for the
+removal, `git show 29deeab:src/PokerCheat.cpp` for the original).
+
+Same structure as the original (one row per candidate `FONT FACE` token
+-- `$title`/`$chalk`/`$ledger`/`$body1`/`$catalog1`/`$Font5`/
+`$gamername` -- rendered through the confirmed-working
+`UIDEBUG::_BG_DISPLAY_TEXT` pipeline, dropped the old pipeline's rows
+since that native pair was already confirmed nullsub on this build), but
+parameterized by language instead of hardcoding English "Face test":
+`PokerCheat.h`/`.cpp` gained `FontTestEnabled`/`FontTestLanguageIndex`,
+`ToggleFontTest()`, and a new `CycleFontTestLanguage()` (advances the
+index with wraparound, logs the new language's code) so all 13 languages
+can be checked one at a time from the same F10 menu, without needing 13
+separate screens' worth of rows on-screen simultaneously. Each row's
+sample text is that language's own actual `PersonalityLabel(lang, 8)`
+("Tight-Aggressive", one of the four real corner values, picked for
+usually being the longest of the four so a partial glyph failure is
+easier to spot) plus `VerdictLabel(lang, 1)` ("(You Win)").
+
+Required widening `Localization.h`'s API: the existing
+`VerdictLabel()`/`PersonalityLabel()` only read `Current()` (the real
+detected/overridden language), which isn't useful for a diagnostic that
+needs to force-render a language the game itself isn't currently set to.
+Added `Language`-taking overloads of both (the no-arg versions now just
+forward to `Current()`), plus `LanguageCode(Language)` for the on-screen/
+log-line language labels ("en-US" etc).
+
+Both Debug and Release build clean (the whole feature is `#ifdef
+_DEBUG`-gated, same as the original). Not yet run against a live game --
+next step is the user cycling through all 13 languages in-game and
+screenshotting which token/language combinations show real characters
+vs. tofu, which will decide whether kPersonalityLabels/kVerdictLabels'
+non-Latin rows need a different token wired into the real HUD calls
+(`DrawSeatCardIcons()`/`DrawWinPredictionStatus()` both currently hardcode
+`$Font5`) or need to fall back to English for scripts nothing can render.
+
+### Open questions
+
+- Still the actual question this whole session exists to answer: which
+  (if any) of the 7 tokens renders real glyphs for each of the 12
+  non-English languages. Nothing here can determine that without a live
+  game session.
+- If NO token renders a given script (plausible for CJK/Korean
+  specifically, since RDR2's legacy text-draw path may only ever have
+  shipped with a Latin/Cyrillic-range font atlas), that language's rows
+  in `kPersonalityLabels`/`kVerdictLabels` should probably fall back to
+  English rather than silently drawing invisible/tofu text -- not
+  implemented yet, pending the actual in-game result.

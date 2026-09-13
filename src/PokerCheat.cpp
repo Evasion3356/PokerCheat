@@ -97,6 +97,23 @@ namespace PokerCheat
 		CalibrationGridEnabled = !CalibrationGridEnabled;
 		Log::Write("PokerCheat::ToggleCalibrationGrid -> {}", CalibrationGridEnabled ? "ON" : "OFF");
 	}
+
+	bool FontTestEnabled = false;
+	int FontTestLanguageIndex = 0; // index into Localization::Language, cycled by CycleFontTestLanguage()
+
+	void ToggleFontTest()
+	{
+		FontTestEnabled = !FontTestEnabled;
+		Log::Write("PokerCheat::ToggleFontTest -> {}", FontTestEnabled ? "ON" : "OFF");
+	}
+
+	void CycleFontTestLanguage()
+	{
+		constexpr int kLanguageCount = static_cast<int>(Localization::Language::Count);
+		FontTestLanguageIndex = (FontTestLanguageIndex + 1) % kLanguageCount;
+		Localization::Language lang = static_cast<Localization::Language>(FontTestLanguageIndex);
+		Log::Write("PokerCheat::CycleFontTestLanguage -> {} ({})", FontTestLanguageIndex, Localization::LanguageCode(lang));
+	}
 #endif
 
 	// ------------------------------------------------------------------
@@ -799,6 +816,81 @@ namespace PokerCheat
 			}
 		}
 
+		// See PokerCheat.h's ToggleFontTest() header comment for the full
+		// history -- this is the same font test built for Session 11's
+		// "a real RDR2 font" investigation (see docs/JOURNAL.md), which
+		// tested a fixed English "Face test" string against every
+		// candidate FONT FACE token to find $Font5 -- restored here,
+		// parameterized by FontTestLanguageIndex (advanced via
+		// CycleFontTestLanguage()) so each of Localization.cpp's 13
+		// languages' OWN translated text can be tested the same way.
+		// $Font5 was only ever confirmed against plain ASCII; nothing
+		// established it (or any other token) actually has glyphs for
+		// accented Latin, Cyrillic, Korean, or CJK.
+		void DrawFontTest()
+		{
+			Localization::Language lang = static_cast<Localization::Language>(FontTestLanguageIndex);
+
+			// Personality index 8 ("Tight-Aggressive" in English) is one
+			// of the four real corner values ever shown at an actual
+			// table (see Localization.cpp's kPersonalityLabels header
+			// comment) and, in most languages, the longest of the four --
+			// picked so a PARTIAL glyph failure (some characters render,
+			// some show as tofu) is easier to spot than with a shorter
+			// sample. Paired with the "you win" verdict wording so both
+			// of this mod's actual on-screen strings get covered by one
+			// sample line.
+			std::string sampleText = std::string(Localization::PersonalityLabel(lang, 8)) + " - " + Localization::VerdictLabel(lang, 1);
+
+			// Same token list Session 11 tried (see the header comment
+			// above) -- $Font5 is the one already confirmed to render a
+			// real RDR2 font for ASCII text; the rest are re-tested here
+			// on the theory that a different token could have broader
+			// Unicode glyph coverage even if $Font5 turns out not to.
+			constexpr const char* kFaceTokens[] = { "$title", "$chalk", "$ledger", "$body1", "$catalog1", "$Font5", "$gamername" };
+			constexpr int kRowCount = sizeof(kFaceTokens) / sizeof(kFaceTokens[0]);
+			constexpr float kFontTestX = 0.28f;
+			constexpr float kFontTestLabelWidth = 0.12f;
+			constexpr float kFontTestY = 0.15f;
+			constexpr float kFontTestLineHeight = 0.045f;
+			constexpr float kFontTestPanelWidth = 0.66f;
+			constexpr float kFontTestPanelPadding = 0.012f;
+
+			DrawPanel(kFontTestX - kFontTestPanelPadding, kFontTestY - kFontTestPanelPadding,
+				kFontTestPanelWidth + kFontTestPanelPadding * 2.0f,
+				static_cast<float>(kRowCount + 1) * kFontTestLineHeight + kFontTestPanelPadding * 2.0f);
+
+			UI::SET_TEXT_SCALE(0.0f, 0.28f);
+			UI::SET_TEXT_COLOR_RGBA(kTitleR, kTitleG, kTitleB, kTitleA);
+			UI::SET_TEXT_CENTRE(0);
+			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+			std::string title = "Font Test " + std::to_string(FontTestLanguageIndex + 1) + "/" + std::to_string(static_cast<int>(Localization::Language::Count))
+				+ " (" + Localization::LanguageCode(lang) + ") -- which rows below show real characters, not boxes?";
+			UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(title.c_str())), kFontTestX, kFontTestY);
+
+			float y = kFontTestY + kFontTestLineHeight;
+			for (int i = 0; i < kRowCount; i++)
+			{
+				UI::SET_TEXT_SCALE(0.0f, 0.26f);
+				UI::SET_TEXT_COLOR_RGBA(kTextR, kTextG, kTextB, kTextA);
+				UI::SET_TEXT_CENTRE(0);
+				UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+				std::string label = std::string(kFaceTokens[i]) + ":";
+				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), kFontTestX, y);
+
+				// New (UIDEBUG) pipeline only -- the old UI::DRAW_TEXT/
+				// SET_TEXT_COLOR_RGBA pair was already confirmed nullsub
+				// on this build back in Session 11 (see ExtraNatives.h),
+				// no reason to re-test it here.
+				std::string formatText = "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='" + std::string(kFaceTokens[i]) + "' LETTERSPACING='0' SIZE='30'>~s~" + sampleText + "</FONT></P><TEXTFORMAT>";
+
+				UIDEBUG::_BG_SET_TEXT_COLOR(140, 220, 255, 255);
+				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), kFontTestX + kFontTestLabelWidth, y);
+
+				y += kFontTestLineHeight;
+			}
+		}
+
 #endif // _DEBUG
 
 		constexpr std::size_t kHandEvalBufWords = 64;
@@ -1344,6 +1436,8 @@ namespace PokerCheat
 #ifdef _DEBUG
 		if (CalibrationGridEnabled)
 			DrawCalibrationGrid();
+		if (FontTestEnabled)
+			DrawFontTest();
 #endif
 
 		if (!Enabled)

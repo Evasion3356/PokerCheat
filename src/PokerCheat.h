@@ -45,6 +45,28 @@ namespace PokerCheat
 	// author to see the screen. See docs/JOURNAL.md.
 	void ToggleCalibrationGrid();
 
+	// Diagnostic: draws every candidate real-font FACE token
+	// ($title/$chalk/$ledger/$body1/$catalog1/$Font5/$gamername, the
+	// same token list DrawFontTest() originally tested back when this
+	// mod was first figuring out which token rendered a real RDR2 font
+	// at all -- see docs/JOURNAL.md, "a real RDR2 font") against one
+	// currently-selected language's own actual translated sample text
+	// (a personality label + the verdict wording, from
+	// Localization.cpp), instead of a fixed English "Face test" string.
+	// Restored for exactly this purpose: $Font5 was only ever confirmed
+	// to render plain ASCII -- unknown whether it (or any other token)
+	// has glyphs for accented Latin/Cyrillic/Korean/CJK at all. Wired to
+	// the F10 menu's "Toggle Font Test" item -- draws regardless of
+	// Enabled/poker state, same convention as the calibration grid
+	// above, so it can be checked without a hand in progress.
+	void ToggleFontTest();
+
+	// Advances DrawFontTest()'s currently-selected language by one (with
+	// wraparound), logging the new language's code so it's clear from
+	// PokerCheat.log which screenshot corresponds to which language.
+	// Wired to the F10 menu's "Cycle Font Test Language" item.
+	void CycleFontTestLanguage();
+
 	// Diagnostic: finds poker_sp's running scrThread and logs the
 	// confirmed Table struct's key fields (board header/reveal count,
 	// seats header, every seat's hole cards) to PokerCheat.log. Wired to

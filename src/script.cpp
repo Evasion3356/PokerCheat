@@ -47,6 +47,8 @@ namespace
 		g_mainMenu->AddItem(new MenuItemAction("Probe Seat Occupancy (see log)", PokerCheat::ProbeSeatOccupancy));
 		g_mainMenu->AddItem(new MenuItemAction("Probe Community Card Objects (see log)", PokerCheat::ProbeCommunityCardObjects));
 		g_mainMenu->AddItem(new MenuItemAction("Toggle Calibration Grid", PokerCheat::ToggleCalibrationGrid));
+		g_mainMenu->AddItem(new MenuItemAction("Toggle Font Test", PokerCheat::ToggleFontTest));
+		g_mainMenu->AddItem(new MenuItemAction("Cycle Font Test Language (see log)", PokerCheat::CycleFontTestLanguage));
 		g_mainMenu->AddItem(new MenuItemAction("Dump Full Stack JSONL", PokerCheat::DumpFullStackJsonl));
 		g_mainMenu->AddItem(new MenuItemAction("Reload Config (see log)", ReloadConfigAndLocalization));
 		g_menuController.RegisterMenu(g_mainMenu);

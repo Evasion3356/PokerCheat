@@ -78,13 +78,29 @@ namespace Localization
 	// DrawSeatCardIcons()'s per-opponent tag and
 	// DrawWinPredictionStatus()'s standalone readout in PokerCheat.cpp,
 	// which previously each had their own identical hardcoded English
-	// copy of this wording.
+	// copy of this wording. Uses Current() for the language.
 	const char* VerdictLabel(int vsResult);
+
+	// Same as above but for an explicitly named language rather than
+	// Current() -- used by PokerCheat.cpp's Debug-only DrawFontTest() so
+	// it can render every supported language's real sample text
+	// regardless of what language the game/ini is actually set to.
+	const char* VerdictLabel(Language lang, int vsResult);
 
 	// Opponent personality/style label -- see PokerCheat.cpp's
 	// kPersonalityIndexBase header comment for what personalityIndex
 	// (0-14) means and how it's read. Returns "" for any index outside
 	// that range, same as the original PersonalityLabel()'s default
-	// case (suppresses the personality half of the on-screen tag).
+	// case (suppresses the personality half of the on-screen tag). Uses
+	// Current() for the language.
 	const char* PersonalityLabel(std::int32_t personalityIndex);
+
+	// Same as above but for an explicitly named language -- see
+	// VerdictLabel(Language, int)'s comment.
+	const char* PersonalityLabel(Language lang, std::int32_t personalityIndex);
+
+	// Short language code ("en-US", "fr-FR", ...) for a given language --
+	// purely for the Debug-only font test's on-screen labels/log lines,
+	// not used by anything Release-facing.
+	const char* LanguageCode(Language lang);
 }

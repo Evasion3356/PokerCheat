@@ -160,17 +160,48 @@ namespace Localization
 		return g_current;
 	}
 
-	const char* VerdictLabel(int vsResult)
+	const char* VerdictLabel(Language lang, int vsResult)
 	{
 		int col = (vsResult > 0) ? 0 : (vsResult < 0) ? 1 : 2;
-		return kVerdictLabels[static_cast<int>(Current())][col];
+		return kVerdictLabels[static_cast<int>(lang)][col];
 	}
 
-	const char* PersonalityLabel(std::int32_t personalityIndex)
+	const char* VerdictLabel(int vsResult)
+	{
+		return VerdictLabel(Current(), vsResult);
+	}
+
+	const char* PersonalityLabel(Language lang, std::int32_t personalityIndex)
 	{
 		if (personalityIndex < 0 || personalityIndex >= kPersonalityLabelCount)
 			return "";
 
-		return kPersonalityLabels[static_cast<int>(Current())][personalityIndex];
+		return kPersonalityLabels[static_cast<int>(lang)][personalityIndex];
+	}
+
+	const char* PersonalityLabel(std::int32_t personalityIndex)
+	{
+		return PersonalityLabel(Current(), personalityIndex);
+	}
+
+	const char* LanguageCode(Language lang)
+	{
+		switch (lang)
+		{
+			case Language::English: return "en-US";
+			case Language::French: return "fr-FR";
+			case Language::German: return "de-DE";
+			case Language::Italian: return "it-IT";
+			case Language::Spanish: return "es-ES";
+			case Language::PortugueseBrazilian: return "pt-BR";
+			case Language::Polish: return "pl-PL";
+			case Language::Russian: return "ru-RU";
+			case Language::Korean: return "ko-KR";
+			case Language::ChineseTraditional: return "zh-TW";
+			case Language::Japanese: return "ja-JP";
+			case Language::SpanishMexican: return "es-MX";
+			case Language::ChineseSimplified: return "zh-CN";
+			default: return "?";
+		}
 	}
 }
