@@ -127,6 +127,7 @@ namespace
 		g_values.ShowWinPrediction = GetOr(general, "ShowWinPrediction", defaults.ShowWinPrediction);
 		g_values.ShowWouldWinHandAgainst = GetOr(general, "ShowWouldWinHandAgainst", defaults.ShowWouldWinHandAgainst);
 		g_values.ShowOpponentPersonality = GetOr(general, "ShowOpponentPersonality", defaults.ShowOpponentPersonality);
+		g_values.Language = GetOr(general, "Language", defaults.Language);
 
 #ifdef _DEBUG
 		// Debug-only -- see Config.h's header comment on PanelX etc.
@@ -161,6 +162,7 @@ namespace
 		SetBool(general, "ShowWinPrediction", g_values.ShowWinPrediction);
 		SetBool(general, "ShowWouldWinHandAgainst", g_values.ShowWouldWinHandAgainst);
 		SetBool(general, "ShowOpponentPersonality", g_values.ShowOpponentPersonality);
+		general["Language"] = g_values.Language;
 
 #ifdef _DEBUG
 		// Debug-only -- see Config.h's header comment on

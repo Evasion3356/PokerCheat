@@ -2852,3 +2852,211 @@ existing win/lose tag).
 - Indices 9-14's real assignment path (same open question carried over
   from Session 14) still not found -- only matters if a named story
   character's poker behavior needs this label to make sense.
+
+## Session 19 -- localizing the HUD's on-screen text
+
+Scoped down first: grepped every `DRAW_TEXT`/`_BG_DISPLAY_TEXT` call site
+and found only two strings a Release build ever actually shows a player --
+the (You Win)/(They Win)/(Tie) verdict wording (`DrawSeatCardIcons()`'s
+tag and `DrawWinPredictionStatus()`'s standalone readout both had their
+own identical hardcoded copy) and `PersonalityLabel()`'s 14 opponent
+style tags. Everything else text-shaped in this file (`HandCategoryName()`,
+the whole seat/board debug panel) is `#ifdef _DEBUG`-only -- confirmed via
+`script.cpp`: the F10 menu itself, including the "Toggle Poker Cheat" item
+that's the only way to turn the mod on/off, is Debug-only too (Release
+self-enables via `PokerCheat::SetEnabled(true)` in `ScriptMain`) -- so none
+of that is player-facing and stays English-only.
+
+### Language detection
+
+Checked `rdr3-nativedb-data/natives.json` for `LANGUAGE::_GET_CURRENT_LANGUAGE_ID()`
+(hash `0xDB917DA5C6835FCC`, already correctly declared in the stock SDK's
+`natives.h`): its own comment documents the exact 13 languages RDR2 ships
+with (0=en-US, 1=fr-FR, 2=de-DE, 3=it-IT, 4=es-ES, 5=pt-BR, 6=pl-PL,
+7=ru-RU, 8=ko-KR, 9=zh-TW, 10=ja-JP, 11=es-MX, 12=zh-CN). Used that as the
+default language source -- matches whatever the player already has RDR2's
+own UI set to, no config needed -- with `PokerCheat.ini`'s new `[General]
+Language` key (`Config::Values::Language`, default `"auto"`) as an
+explicit override for anyone who wants the HUD in a different language
+than their game UI.
+
+Side finding, not acted on: the stock SDK's neighboring stub
+`LANGUAGE::_GET_USER_LANGUAGE_ID()` (hash `0x76E30B799EBEEA0F`) is
+mismapped -- nativedb shows that hash is actually
+`LOCALIZATION_GET_SYSTEM_DATE_TYPE`, not a language getter. Left it alone
+(unused) rather than "fixing" it in `ExtraNatives.h`, since
+`_GET_CURRENT_LANGUAGE_ID` alone is all this feature needs.
+
+### Implementation
+
+New `Localization.h/.cpp`: a `Language` enum mirroring the native's 13
+index values, `Refresh()` (resolves the ini override or falls back to the
+native, same "resolve once, cache" pattern `Config::Get()`'s `g_loaded`
+bool already uses -- see `Current()`), `VerdictLabel(vsResult)`, and
+`PersonalityLabel(personalityIndex)`. `PersonalityLabel()`'s old
+derivation comment (the `func_584`/`func_1191`/`func_185` trace from
+Session 14/18) moved from `PokerCheat.cpp` to sit above `Localization.cpp`'s
+`kPersonalityLabels` table, which it now actually documents.
+
+One real gotcha caught before it shipped: `Localization::Refresh()` calls
+a real game native, so -- unlike `Config::Reload()`, which `main.cpp`'s
+header comment explicitly notes is safe from `DllMain` because it never
+touches game natives or script-hook state -- it must run from inside
+ScriptHookRDR2's own script fiber. Solved the same way `Config::Get()`
+avoids needing an explicit `DllMain` call at all: `Current()` lazily calls
+`Refresh()` on first use, and its first-ever call will always come from
+`OnTick()` (already running inside the fiber). The Debug F10 menu's
+"Reload Config" item was widened to a small `ReloadConfigAndLocalization()`
+wrapper in `script.cpp` so editing `PokerCheat.ini`'s new `Language` key
+live re-picks the language immediately, same live-tuning workflow as
+every other Config-backed value.
+
+Translated `kPersonalityLabels`/`kVerdictLabels` for all 13 languages
+in one pass (LLM-assisted, not reviewed by a native speaker per
+language) rather than starting with only a few -- if a wording turns out
+wrong, fix that language's row directly in `Localization.cpp`, no other
+file needs to change. Kept several poker terms (Calling Station, All-In
+Shover, Push/Fold) as the English loanword in languages where that's
+genuinely how poker communities use them rather than forcing a literal
+translation.
+
+Confirmed the project's existing `/utf-8` `AdditionalOptions` (already
+present in both configs' compiler flags, `PokerCheat.vcxproj`) makes the
+Cyrillic/Korean/CJK string literals compile to correct UTF-8 bytes --
+checked directly by grepping the built `.asi` for known UTF-8 byte
+sequences (`Ничья`, `あなたの勝ち`, `跟注站`), all found intact. Both
+Debug and Release build clean; `PokerHandEvalTests` (untouched by this
+change) still `ALL PASS`.
+
+### Open questions
+
+- Not yet confirmed live in any non-English language: whether the fixed
+  legacy font `UIDEBUG::_BG_DISPLAY_TEXT` actually renders through (see
+  `DrawWinPredictionStatus()`'s header comment -- no `SET_TEXT_FONT`
+  equivalent exists, and this pipeline was only ever proven out in
+  English) has glyph coverage for accented Latin, Cyrillic, or CJK at
+  all -- it may fall back to tofu/blank boxes for some or all of the
+  non-English rows above. Needs an actual in-game check per language
+  (force `PokerCheat.ini`'s `Language` override, one language at a
+  time) before trusting any of this beyond English.
+- Poker jargon translations (Calling Station, All-In Shover, Push/Fold,
+  Pot-Cap Gate especially) are a best-effort pass, not verified against
+  what real poker communities in each language actually call these --
+  worth a native-speaker review pass per language before calling this
+  fully "done" rather than "shipped and probably close."
+
+## Session 20 -- restored the font test, now per-language
+
+Directly follows Session 19's first open question: nothing had actually
+confirmed any font token has non-ASCII glyph coverage, so before trusting
+12 of the 13 new translations at all, brought back Session 11's font test
+diagnostic (`DrawFontTest`/`ToggleFontTest`, removed in the commit
+documented as "Replaced the 'Toggle Font Test' F10 diagnostic" once
+`$Font5` was confirmed for English -- see `git show bbc8d9d` for the
+removal, `git show 29deeab:src/PokerCheat.cpp` for the original).
+
+Same structure as the original (one row per candidate `FONT FACE` token
+-- `$title`/`$chalk`/`$ledger`/`$body1`/`$catalog1`/`$Font5`/
+`$gamername` -- rendered through the confirmed-working
+`UIDEBUG::_BG_DISPLAY_TEXT` pipeline, dropped the old pipeline's rows
+since that native pair was already confirmed nullsub on this build), but
+parameterized by language instead of hardcoding English "Face test":
+`PokerCheat.h`/`.cpp` gained `FontTestEnabled`/`FontTestLanguageIndex`,
+`ToggleFontTest()`, and a new `CycleFontTestLanguage()` (advances the
+index with wraparound, logs the new language's code) so all 13 languages
+can be checked one at a time from the same F10 menu, without needing 13
+separate screens' worth of rows on-screen simultaneously. Each row's
+sample text is that language's own actual `PersonalityLabel(lang, 8)`
+("Tight-Aggressive", one of the four real corner values, picked for
+usually being the longest of the four so a partial glyph failure is
+easier to spot) plus `VerdictLabel(lang, 1)` ("(You Win)").
+
+Required widening `Localization.h`'s API: the existing
+`VerdictLabel()`/`PersonalityLabel()` only read `Current()` (the real
+detected/overridden language), which isn't useful for a diagnostic that
+needs to force-render a language the game itself isn't currently set to.
+Added `Language`-taking overloads of both (the no-arg versions now just
+forward to `Current()`), plus `LanguageCode(Language)` for the on-screen/
+log-line language labels ("en-US" etc).
+
+Both Debug and Release build clean (the whole feature is `#ifdef
+_DEBUG`-gated, same as the original). Not yet run against a live game --
+next step is the user cycling through all 13 languages in-game and
+screenshotting which token/language combinations show real characters
+vs. tofu, which will decide whether kPersonalityLabels/kVerdictLabels'
+non-Latin rows need a different token wired into the real HUD calls
+(`DrawSeatCardIcons()`/`DrawWinPredictionStatus()` both currently hardcode
+`$Font5`) or need to fall back to English for scripts nothing can render.
+
+### Open questions
+
+- Still the actual question this whole session exists to answer: which
+  (if any) of the 7 tokens renders real glyphs for each of the 12
+  non-English languages. Nothing here can determine that without a live
+  game session.
+- If NO token renders a given script (plausible for CJK/Korean
+  specifically, since RDR2's legacy text-draw path may only ever have
+  shipped with a Latin/Cyrillic-range font atlas), that language's rows
+  in `kPersonalityLabels`/`kVerdictLabels` should probably fall back to
+  English rather than silently drawing invisible/tofu text -- not
+  implemented yet, pending the actual in-game result.
+
+## Session 21 -- Session 20's open question answered: it was a test methodology bug, not a font limitation
+
+First live test (user's report): cycling the font test through all 13
+languages while playing in English showed every token rendering fine for
+every Latin-script language and Russian, but Korean/Japanese/both Chinese
+variants came back as tofu/blank boxes on EVERY one of the 7 tokens,
+including `$Font5`. Before writing an English-fallback for those four
+languages (the plan Session 20 left open), checked the actual font
+library those tokens draw from: pulled the file listing from
+`github.com/ExpMero/rdr2_fonts` (the same repo Session 11 cross-confirmed
+token names against) --
+
+```
+$chalk, $wantedPostersGeneric, $catalog4, $catalog2, $catalog1,
+$RockstarTAG, $SOCIAL_CLUB_COND_REG, $body1, $gamername,
+$FixedWidthNumbers, $body2, $handwritten, $catalog5, $ledger, $Debug_REG,
+$title1, $Font5_limited, $catalog3
+```
+
+-- 18 fonts total, all Latin/symbol faces (RDR Lino, Droid Serif,
+HelveticaNeue, Arial, etc.), zero CJK-capable entries, and `$Font5`'s
+real name is literally `Font5_limited_Redemption` ("limited" character
+set, right in the name). This looked at first like confirmation that the
+whole legacy pipeline is CJK-incapable by construction -- but this
+extraction is necessarily from an English-language game install, and a
+game that genuinely ships full Chinese/Japanese/Korean localizations
+obviously renders CJK somewhere. Realized the actual variable never
+controlled for: RDR2 (same as GTA V) only streams a language's font/text
+assets into memory for the language it's ACTUALLY configured to run in
+(Steam Properties -> Language, requiring a relaunch) -- `PokerCheat.ini`'s
+`Language` override only changes which of `Localization.cpp`'s strings
+THIS MOD draws, it can no more make the base game load Chinese font
+assets than editing a subtitle file could. Asked the user to confirm --
+they had been testing entirely in English/default with only the ini
+override changed, exactly this gap. Documented as a real methodology
+pitfall (`docs/PITFALLS.md`) so it isn't relearned next time a
+non-default-language render needs checking.
+
+Re-tested with RDR2's REAL language actually switched to Chinese (Steam
+Properties, relaunched): every token rendered CJK correctly except
+`$gamername` (plausibly restricted to the fixed Latin/numeral gamertag
+charset its real name, "Rockstar Gamertag Cond", implies -- never
+confirmed further, not worth chasing since this mod doesn't use it
+anyway). `$Font5` -- already this mod's actual choice for
+`DrawSeatCardIcons()`/`DrawWinPredictionStatus()`, unchanged since
+Session 11 -- was among the tokens that worked. Net result: **no code
+change needed** for the real HUD; the localization work from Session 19
+was correct as shipped, provided a real Chinese/Japanese/Korean player
+has their own game genuinely set to that language (which, for an actual
+speaker of it, they will be). Only touched comments in
+`PokerCheat.h`/`.cpp` (`ToggleFontTest()`/`DrawFontTest()` header
+comments) to record the confirmed result instead of the prior "unknown"
+framing, plus this entry and the `PITFALLS.md` addition.
+
+### Open questions
+
+- None outstanding for font rendering -- closed. `$gamername`'s CJK
+  failure specifically was noted but not root-caused; irrelevant unless
+  this mod ever has a reason to use that token.

@@ -5,6 +5,17 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [Unreleased]
+
+### Added
+- HUD localization: the (You Win)/(They Win)/(Tie) verdict tag and the
+  opponent personality/style label now automatically match the game's
+  own current UI language (13 languages, matching every language RDR2
+  itself ships with), instead of always showing English. Override with
+  a new `Language` key under `PokerCheat.ini`'s `[General]` section
+  (default `auto`) to force a specific language regardless of the
+  game's own UI language.
+
 ## [1.2.0] - 2026-09-13
 
 ### Added

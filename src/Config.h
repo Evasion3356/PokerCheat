@@ -35,6 +35,8 @@
 
 #pragma once
 
+#include <string>
+
 namespace Config
 {
 	struct Values
@@ -45,6 +47,18 @@ namespace Config
 		bool ShowCommunityCards = true;
 		bool ShowOthersCards = true;
 		bool ShowWinPrediction = true;
+
+		// Overrides which language the HUD's opponent personality/
+		// verdict labels show in (see Localization.h/.cpp) -- "auto"
+		// (the default) matches the game's own current UI language
+		// automatically via LANGUAGE::_GET_CURRENT_LANGUAGE_ID(), no
+		// setup needed. Set to one of en-US/fr-FR/de-DE/it-IT/es-ES/
+		// pt-BR/pl-PL/ru-RU/ko-KR/zh-TW/ja-JP/es-MX/zh-CN (the exact
+		// codes that native itself maps to) to force a specific
+		// language regardless of the game's own UI language; anything
+		// else unrecognized (a typo, or this default "auto") falls back
+		// to that same auto-detect behavior.
+		std::string Language = "auto";
 
 		// (You Win)/(They Win)/(Tie) label drawn under each opponent's
 		// seat card icons (see DrawSeatCardIcons() in PokerCheat.cpp) --
