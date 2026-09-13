@@ -3000,3 +3000,63 @@ non-Latin rows need a different token wired into the real HUD calls
   in `kPersonalityLabels`/`kVerdictLabels` should probably fall back to
   English rather than silently drawing invisible/tofu text -- not
   implemented yet, pending the actual in-game result.
+
+## Session 21 -- Session 20's open question answered: it was a test methodology bug, not a font limitation
+
+First live test (user's report): cycling the font test through all 13
+languages while playing in English showed every token rendering fine for
+every Latin-script language and Russian, but Korean/Japanese/both Chinese
+variants came back as tofu/blank boxes on EVERY one of the 7 tokens,
+including `$Font5`. Before writing an English-fallback for those four
+languages (the plan Session 20 left open), checked the actual font
+library those tokens draw from: pulled the file listing from
+`github.com/ExpMero/rdr2_fonts` (the same repo Session 11 cross-confirmed
+token names against) --
+
+```
+$chalk, $wantedPostersGeneric, $catalog4, $catalog2, $catalog1,
+$RockstarTAG, $SOCIAL_CLUB_COND_REG, $body1, $gamername,
+$FixedWidthNumbers, $body2, $handwritten, $catalog5, $ledger, $Debug_REG,
+$title1, $Font5_limited, $catalog3
+```
+
+-- 18 fonts total, all Latin/symbol faces (RDR Lino, Droid Serif,
+HelveticaNeue, Arial, etc.), zero CJK-capable entries, and `$Font5`'s
+real name is literally `Font5_limited_Redemption` ("limited" character
+set, right in the name). This looked at first like confirmation that the
+whole legacy pipeline is CJK-incapable by construction -- but this
+extraction is necessarily from an English-language game install, and a
+game that genuinely ships full Chinese/Japanese/Korean localizations
+obviously renders CJK somewhere. Realized the actual variable never
+controlled for: RDR2 (same as GTA V) only streams a language's font/text
+assets into memory for the language it's ACTUALLY configured to run in
+(Steam Properties -> Language, requiring a relaunch) -- `PokerCheat.ini`'s
+`Language` override only changes which of `Localization.cpp`'s strings
+THIS MOD draws, it can no more make the base game load Chinese font
+assets than editing a subtitle file could. Asked the user to confirm --
+they had been testing entirely in English/default with only the ini
+override changed, exactly this gap. Documented as a real methodology
+pitfall (`docs/PITFALLS.md`) so it isn't relearned next time a
+non-default-language render needs checking.
+
+Re-tested with RDR2's REAL language actually switched to Chinese (Steam
+Properties, relaunched): every token rendered CJK correctly except
+`$gamername` (plausibly restricted to the fixed Latin/numeral gamertag
+charset its real name, "Rockstar Gamertag Cond", implies -- never
+confirmed further, not worth chasing since this mod doesn't use it
+anyway). `$Font5` -- already this mod's actual choice for
+`DrawSeatCardIcons()`/`DrawWinPredictionStatus()`, unchanged since
+Session 11 -- was among the tokens that worked. Net result: **no code
+change needed** for the real HUD; the localization work from Session 19
+was correct as shipped, provided a real Chinese/Japanese/Korean player
+has their own game genuinely set to that language (which, for an actual
+speaker of it, they will be). Only touched comments in
+`PokerCheat.h`/`.cpp` (`ToggleFontTest()`/`DrawFontTest()` header
+comments) to record the confirmed result instead of the prior "unknown"
+framing, plus this entry and the `PITFALLS.md` addition.
+
+### Open questions
+
+- None outstanding for font rendering -- closed. `$gamername`'s CJK
+  failure specifically was noted but not root-caused; irrelevant unless
+  this mod ever has a reason to use that token.

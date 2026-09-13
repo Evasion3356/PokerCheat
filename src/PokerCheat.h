@@ -53,12 +53,19 @@ namespace PokerCheat
 	// currently-selected language's own actual translated sample text
 	// (a personality label + the verdict wording, from
 	// Localization.cpp), instead of a fixed English "Face test" string.
-	// Restored for exactly this purpose: $Font5 was only ever confirmed
-	// to render plain ASCII -- unknown whether it (or any other token)
-	// has glyphs for accented Latin/Cyrillic/Korean/CJK at all. Wired to
-	// the F10 menu's "Toggle Font Test" item -- draws regardless of
-	// Enabled/poker state, same convention as the calibration grid
-	// above, so it can be checked without a hand in progress.
+	// Restored to check whether $Font5 (already confirmed for plain
+	// ASCII) or any other token has glyphs for accented Latin/Cyrillic/
+	// CJK -- Session 20/21 confirmed all 13 languages, including
+	// Chinese/Japanese/Korean, render correctly through $Font5 (every
+	// token except $gamername, in fact) PROVIDED RDR2's own actual
+	// configured language matches -- see docs/PITFALLS.md, testing this
+	// with the game itself still set to English/whatever and only this
+	// mod's ini Language override changed shows tofu for CJK regardless
+	// of token, since the game never streams in that language's font/
+	// text assets at all otherwise. Wired to the F10 menu's "Toggle Font
+	// Test" item -- draws regardless of Enabled/poker state, same
+	// convention as the calibration grid above, so it can be checked
+	// without a hand in progress.
 	void ToggleFontTest();
 
 	// Advances DrawFontTest()'s currently-selected language by one (with

@@ -34,4 +34,24 @@ hard way here too.
   build (`EXEs\1491.50\RDR2_Dumped.exe.i64`) that's the right tool for
   that confirmation.
 
+## This project
+
+- **A per-language ini override doesn't make the game load that
+  language's assets -- test glyph rendering with the game's REAL
+  language set, not just this mod's override.** `PokerCheat.ini`'s
+  `Language` key only changes which of `Localization.cpp`'s translated
+  strings THIS MOD draws; it can't make RDR2 itself stream in a
+  different language's font/text assets. First pass of testing the
+  Chinese/Japanese/Korean translations (Session 20) showed every font
+  token rendering as tofu/blank boxes, which looked like a real font
+  limitation -- but the game's own actual configured language (Steam
+  Properties -> Language) was still English/default the whole time.
+  Re-tested (Session 21) with RDR2's real language actually switched to
+  Chinese and relaunched: every token except `$gamername` rendered CJK
+  correctly, `$Font5` (this mod's actual choice) included. Lesson: any
+  non-default-language rendering test needs the game's REAL language
+  changed and the game relaunched first -- the ini override is only
+  useful for previewing which STRING would show, never for testing
+  whether it can actually be DRAWN.
+
 Add new entries above this line as real mistakes happen.

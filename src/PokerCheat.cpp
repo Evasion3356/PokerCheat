@@ -824,9 +824,16 @@ namespace PokerCheat
 		// parameterized by FontTestLanguageIndex (advanced via
 		// CycleFontTestLanguage()) so each of Localization.cpp's 13
 		// languages' OWN translated text can be tested the same way.
-		// $Font5 was only ever confirmed against plain ASCII; nothing
-		// established it (or any other token) actually has glyphs for
-		// accented Latin, Cyrillic, Korean, or CJK.
+		// RESULT (Session 20/21): every token except $gamername renders
+		// all 13 languages correctly, including Chinese/Japanese/Korean --
+		// PROVIDED RDR2's own actual configured language matches what's
+		// being tested (see docs/PITFALLS.md; testing a CJK language
+		// while the game itself still runs in English/whatever shows
+		// tofu regardless of token, since the CJK font/text assets are
+		// never streamed in at all otherwise). This mod's real HUD calls
+		// (DrawSeatCardIcons()/DrawWinPredictionStatus()) already use
+		// $Font5, so no change was needed there -- this tool stays wired
+		// up for re-verifying after any future game update.
 		void DrawFontTest()
 		{
 			Localization::Language lang = static_cast<Localization::Language>(FontTestLanguageIndex);
@@ -843,10 +850,12 @@ namespace PokerCheat
 			std::string sampleText = std::string(Localization::PersonalityLabel(lang, 8)) + " - " + Localization::VerdictLabel(lang, 1);
 
 			// Same token list Session 11 tried (see the header comment
-			// above) -- $Font5 is the one already confirmed to render a
-			// real RDR2 font for ASCII text; the rest are re-tested here
-			// on the theory that a different token could have broader
-			// Unicode glyph coverage even if $Font5 turns out not to.
+			// above). $gamername is the sole exception found in Session
+			// 20/21's per-language pass -- confirmed NOT to render CJK
+			// (likely intended only for the fixed Latin/numeral gamertag
+			// charset its real name, "Rockstar Gamertag Cond", implies) --
+			// kept in this list anyway so a future run of this tool
+			// re-confirms that instead of silently assuming it.
 			constexpr const char* kFaceTokens[] = { "$title", "$chalk", "$ledger", "$body1", "$catalog1", "$Font5", "$gamername" };
 			constexpr int kRowCount = sizeof(kFaceTokens) / sizeof(kFaceTokens[0]);
 			constexpr float kFontTestX = 0.28f;
