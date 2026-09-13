@@ -33,18 +33,33 @@ namespace
 	// One row per Language (see Localization.h's enum, same ordering),
 	// 15 columns matching that same 0-14 index order plus the trailing
 	// unused-in-practice entries. Translations beyond row 0 (English)
-	// are LLM-assisted, not yet reviewed by a native speaker per
-	// language -- several poker terms (Calling Station, All-In Shover,
-	// Push/Fold) are kept as the English loanword in languages where
-	// that's genuinely how poker communities use them; fix a row
-	// directly here if a wording turns out to be wrong.
+	// were originally LLM-assisted guesses; Session 22 (docs/JOURNAL.md)
+	// spot-checked indices 5-8 specifically (Loose-Passive/Tight-Passive/
+	// Loose-Aggressive/Tight-Aggressive -- the only ones a real seat ever
+	// shows, see this comment block above) against real poker-community
+	// usage per language via web search, since poker jargon is unusually
+	// loanword-heavy and a plausible-sounding literal translation can
+	// still be wrong (found and fixed two: French had translated "Tight"/
+	// "Loose" to "Serré"/"Lâche" when the real term keeps them as English
+	// loanwords -- "tight-agressif" -- same as every other language
+	// checked; both Chinese variants had used the generic word for
+	// "aggressive" (激进/激進) instead of the actual poker-slang word
+	// (凶/兇) real Chinese poker sites use for this specific meaning).
+	// Everything else -- indices 0-4 and 9-14 (never actually shown at a
+	// real table, including Calling Station/All-In Shover/Push/Fold/
+	// Pot-Cap Gate -- see the comment above) plus all 13 languages'
+	// VerdictLabel wording -- remains an unverified best-effort guess;
+	// fix a row directly here if a wording turns out to be wrong.
 	constexpr int kPersonalityLabelCount = 15;
 	const char* const kPersonalityLabels[kLanguageCount][kPersonalityLabelCount] =
 	{
 		// English (en-US)
 		{ "Neutral", "Tight", "Loose", "Aggressive", "Passive", "Loose-Passive", "Tight-Passive", "Loose-Aggressive", "Tight-Aggressive", "Calling Station", "All-In Shover", "Always All-In", "Calling Station", "Push/Fold", "Pot-Cap Gate" },
-		// French (fr-FR)
-		{ "Neutre", "Serré", "Lâche", "Agressif", "Passif", "Lâche-Passif", "Serré-Passif", "Lâche-Agressif", "Serré-Agressif", "Calling Station", "Shover All-in", "Toujours All-in", "Calling Station", "Push/Fold", "Plafond de mise" },
+		// French (fr-FR) -- "Tight"/"Loose" confirmed kept as English
+		// loanwords in real usage (pokerstrategy.com/fr, caen-poker.com:
+		// "tight-agressif"), not translated to "Serré"/"Lâche" as this
+		// row originally had it (Session 22, docs/JOURNAL.md).
+		{ "Neutre", "Tight", "Loose", "Agressif", "Passif", "Loose-Passif", "Tight-Passif", "Loose-Agressif", "Tight-Agressif", "Calling Station", "Shover All-in", "Toujours All-in", "Calling Station", "Push/Fold", "Plafond de mise" },
 		// German (de-DE)
 		{ "Neutral", "Tight", "Loose", "Aggressiv", "Passiv", "Loose-Passiv", "Tight-Passiv", "Loose-Aggressiv", "Tight-Aggressiv", "Calling Station", "All-In-Schieber", "Immer All-In", "Calling Station", "Push/Fold", "Pot-Cap-Grenze" },
 		// Italian (it-IT)
@@ -59,15 +74,25 @@ namespace
 		{ "Нейтральный", "Тайтовый", "Лузовый", "Агрессивный", "Пассивный", "Лузово-пассивный", "Тайтово-пассивный", "Лузово-агрессивный", "Тайтово-агрессивный", "Коллинг-стейшн", "Олл-ин шовер", "Всегда олл-ин", "Коллинг-стейшн", "Пуш/Фолд", "Лимит банка" },
 		// Korean (ko-KR)
 		{ "중립", "타이트", "루즈", "어그레시브", "패시브", "루즈-패시브", "타이트-패시브", "루즈-어그레시브", "타이트-어그레시브", "콜링 스테이션", "올인 슈버", "항상 올인", "콜링 스테이션", "푸시/폴드", "팟 캡 게이트" },
-		// Chinese, Traditional (zh-TW)
-		{ "中性", "緊", "鬆", "激進", "被動", "鬆被動", "緊被動", "鬆激進", "緊激進", "跟注站", "全下推手", "永遠全下", "跟注站", "推/棄", "底池上限" },
+		// Chinese, Traditional (zh-TW) -- "Aggressive" confirmed as the
+		// poker-slang 兇 in real usage (monsterstack.com.tw: "緊兇"/
+		// "緊積極(緊兇)"), not the generic word 激進 ("radical/extreme")
+		// this row originally had it as (Session 22, docs/JOURNAL.md).
+		// "Passive" (被動) left as-is -- a legitimate near-synonym of the
+		// same source's alternate term 消極.
+		{ "中性", "緊", "鬆", "兇", "被動", "鬆被動", "緊被動", "鬆兇", "緊兇", "跟注站", "全下推手", "永遠全下", "跟注站", "推/棄", "底池上限" },
 		// Japanese (ja-JP)
 		{ "ニュートラル", "タイト", "ルース", "アグレッシブ", "パッシブ", "ルース・パッシブ", "タイト・パッシブ", "ルース・アグレッシブ", "タイト・アグレッシブ", "コーリングステーション", "オールインシューバー", "常にオールイン", "コーリングステーション", "プッシュ/フォールド", "ポットキャップゲート" },
 		// Spanish, Mexican (es-MX) -- same poker vocabulary as es-ES,
 		// no meaningful regional difference for these terms
 		{ "Neutral", "Tight", "Loose", "Agresivo", "Pasivo", "Loose-Pasivo", "Tight-Pasivo", "Loose-Agresivo", "Tight-Agresivo", "Calling Station", "All-In Shover", "Siempre All-In", "Calling Station", "Push/Fold", "Límite de Bote" },
-		// Chinese, Simplified (zh-CN)
-		{ "中性", "紧", "松", "激进", "被动", "松被动", "紧被动", "松激进", "紧激进", "跟注站", "全下推手", "永远全下", "跟注站", "推/弃", "底池上限" },
+		// Chinese, Simplified (zh-CN) -- "Aggressive" confirmed as the
+		// poker-slang 凶 in real usage (dpskill.com: "紧凶"/"松凶"), not
+		// the generic word 激进 ("radical/extreme") this row originally
+		// had it as (Session 22, docs/JOURNAL.md). "Passive" (被动) left
+		// as-is -- a legitimate near-synonym of the same style source's
+		// alternate term 消极.
+		{ "中性", "紧", "松", "凶", "被动", "松被动", "紧被动", "松凶", "紧凶", "跟注站", "全下推手", "永远全下", "跟注站", "推/弃", "底池上限" },
 	};
 
 	// vsResult: 0 = you win, 1 = they win, 2 = tie (see VerdictLabel()'s
