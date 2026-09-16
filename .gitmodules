@@ -4,3 +4,9 @@
 [submodule "external/spdlog"]
 	path = external/spdlog
 	url = https://github.com/gabime/spdlog.git
+[submodule "external/RDR-Classes"]
+	path = external/RDR-Classes
+	url = https://github.com/YimMenu/RDR-Classes.git
+[submodule "external/ScriptHookSDK"]
+	path = external/ScriptHookSDK
+	url = https://github.com/Evasion3356/ScriptHookRDR2-SDK.git

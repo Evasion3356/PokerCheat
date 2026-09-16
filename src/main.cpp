@@ -4,7 +4,7 @@
 	sample and CollectorOffline's main.cpp.
 */
 
-#include "..\..\ScriptHookSDK\inc\main.h"
+#include "..\external\ScriptHookSDK\inc\main.h"
 #include "script.h"
 #include "keyboard.h"
 #include "Config.h"
