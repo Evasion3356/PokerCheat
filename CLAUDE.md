@@ -64,10 +64,16 @@ literal `"0x%llX"`; fixed-precision floats use `{:.Nf}`.
 "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" PokerCheat.vcxproj /p:Configuration=Release /p:Platform=x64 /nologo /v:minimal
 ```
 
-The project's `PostBuildEvent` copies the built `.asi` straight into the
-game folder (`E:\SteamLibrary\steamapps\common\Red Dead Redemption 2`).
-**RDR2.exe must be closed first** or the copy fails with a file-in-use
-error -- check `tasklist //FI "IMAGENAME eq RDR2.exe"` before every build.
+The project's `PostBuildEvent` auto-locates the RDR2 install directory
+(`BuildTools\Find-RDR2GameDir.ps1` -- vendored identically into every
+sibling project, since each is its own separate git repo; see that
+file's own header comment) and copies the built `.asi` straight into it,
+on every build regardless of whether the build itself
+was up to date. `DisableFastUpToDateCheck` is set in the `.vcxproj.user`
+so this also holds for Visual Studio IDE builds, not just command-line
+MSBuild. **RDR2.exe must be closed first** or the copy fails with a
+file-in-use error -- check `tasklist //FI "IMAGENAME eq RDR2.exe"` before
+every build.
 
 A `Debug|x64` configuration also exists (`/p:Configuration=Debug` in the
 same command) for when a crash needs a real live-debugger trace instead of
