@@ -38,6 +38,13 @@ fixed-size buffer upstream of it. Same convention `../BlackjackCheat`
 is converging on (see that project's own CLAUDE.md) -- don't reintroduce
 either pattern when porting code between the two.
 
+**Strings: `std::string_view` for read-only text.** `Localization`'s
+tables are `constexpr std::string_view` and its getters return
+`std::string_view`. Per-frame Release HUD text must not allocate: build it
+into a reused `static std::string` (`BgFormatText`, `AppendInt`) rather than
+concatenating temporaries or using `ostringstream`. Debug-only text can keep
+`std::string`/`ostringstream`.
+
 **Logging goes through spdlog, fmt-style, not printf-style.**
 `Log::Write` (`src/Log.h`) is a thin template wrapper around a
 file-backed `spdlog::logger` (see `external/spdlog`, header-only mode --

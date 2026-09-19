@@ -71,7 +71,11 @@
 
 #include <sstream>
 #include <iomanip>
+#include <array>
+#include <charconv>
+#include <initializer_list>
 #include <string>
+#include <string_view>
 
 namespace PokerCheat
 {
@@ -532,6 +536,25 @@ namespace PokerCheat
 		// starting estimate this was tuned from).
 		constexpr int kSeatCardIconCount = 2;
 
+		// Wraps `parts` (concatenated) in the rich-text tags
+		// UIDEBUG::_BG_DISPLAY_TEXT needs to render in $Font5. Builds into one
+		// reused buffer, so the per-frame HUD text does no heap allocation once
+		// its capacity has grown. The returned pointer is valid until the next call.
+		const char* BgFormatText(int fontSize, std::initializer_list<std::string_view> parts)
+		{
+			static std::string buffer;
+			std::array<char, 12> digits{};
+			const auto sizeEnd = std::to_chars(digits.data(), digits.data() + digits.size(), fontSize).ptr;
+
+			buffer.assign("<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='");
+			buffer.append(digits.data(), sizeEnd);
+			buffer.append("'>~s~");
+			for (const std::string_view part : parts)
+				buffer.append(part);
+			buffer.append("</FONT></P><TEXTFORMAT>");
+			return buffer.c_str();
+		}
+
 #ifndef _DEBUG
 		constexpr float kReleaseSeatCardIconBaseX = 0.18f;
 		constexpr float kReleaseSeatCardIconBaseY = 0.83f;
@@ -555,7 +578,7 @@ namespace PokerCheat
 		// personalityLabel: empty string suppresses the personality half
 		// (see Localization::PersonalityLabel()/ShowOpponentPersonality) -- the two
 		// halves are independent, either can show without the other.
-		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, const char* personalityLabel)
+		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, std::string_view personalityLabel)
 		{
 			std::string cardSetDict;
 			if (!FindLoadedCardSetDict(cardSetDict))
@@ -623,29 +646,25 @@ namespace PokerCheat
 			// is used, same tone DrawLine()'s Debug-only text panel uses
 			// elsewhere in this file, kept local here since that function
 			// isn't compiled into Release builds.
-			bool showPersonality = Config::Get().ShowOpponentPersonality && personalityLabel && personalityLabel[0] != '\0';
+			bool showPersonality = Config::Get().ShowOpponentPersonality && !personalityLabel.empty();
 			bool showVsMe = Config::Get().ShowWouldWinHandAgainst && vsMeResult != 2;
 			if (showPersonality || showVsMe)
 			{
-				const char* vsLabel = Localization::VerdictLabel(vsMeResult);
+				const std::string_view vsLabel = Localization::VerdictLabel(vsMeResult);
 				int labelR = showVsMe ? ((vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 255 : 255) : 235;
 				int labelG = showVsMe ? ((vsMeResult > 0) ? 255 : (vsMeResult < 0) ? 110 : 230) : 222;
 				int labelB = showVsMe ? ((vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 110 : 140) : 194;
 
-				std::string label = showPersonality ? personalityLabel : "";
-				if (showPersonality && showVsMe)
-					label += " - ";
-				if (showVsMe)
-					label += vsLabel;
-
 				float labelX = x + labelOffsetX;
 				float labelY = y + height + labelOffsetY;
 
-				std::string formatText = "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='30'>~s~"
-					+ label + "</FONT></P><TEXTFORMAT>";
+				const char* formatText = BgFormatText(30, {
+					showPersonality ? personalityLabel : std::string_view(),
+					showPersonality && showVsMe ? std::string_view(" - ") : std::string_view(),
+					showVsMe ? vsLabel : std::string_view() });
 
 				UIDEBUG::_BG_SET_TEXT_COLOR(labelR, labelG, labelB, 255);
-				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), labelX, labelY);
+				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), labelX, labelY);
 			}
 		}
 
@@ -683,7 +702,7 @@ namespace PokerCheat
 				return;
 
 			int result = !anyOpponent ? 1 : (worstResult > 0 ? 1 : worstResult == 0 ? 0 : -1);
-			const char* label = Localization::VerdictLabel(result);
+			const std::string_view label = Localization::VerdictLabel(result);
 			int r = (result > 0) ? 140 : (result < 0) ? 255 : 255;
 			int g = (result > 0) ? 255 : (result < 0) ? 110 : 230;
 			int b = (result > 0) ? 140 : (result < 0) ? 110 : 140;
@@ -696,11 +715,10 @@ namespace PokerCheat
 			float winPredictionX = kReleaseWinPredictionX;
 			float winPredictionY = kReleaseWinPredictionY;
 #endif
-			std::string formatText = "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='$Font5' LETTERSPACING='0' SIZE='40'>~s~"
-				+ std::string(label) + "</FONT></P><TEXTFORMAT>";
+			const char* formatText = BgFormatText(40, { label });
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), winPredictionX, winPredictionY);
+			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), winPredictionX, winPredictionY);
 		}
 
 #ifdef _DEBUG
@@ -847,7 +865,7 @@ namespace PokerCheat
 			// sample. Paired with the "you win" verdict wording so both
 			// of this mod's actual on-screen strings get covered by one
 			// sample line.
-			std::string sampleText = std::string(Localization::PersonalityLabel(lang, 8)) + " - " + Localization::VerdictLabel(lang, 1);
+			std::string sampleText = std::string(Localization::PersonalityLabel(lang, 8)) + " - " + std::string(Localization::VerdictLabel(lang, 1));
 
 			// Same token list Session 11 tried (see the header comment
 			// above). $gamername is the sole exception found in Session
@@ -874,7 +892,7 @@ namespace PokerCheat
 			UI::SET_TEXT_CENTRE(0);
 			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
 			std::string title = "Font Test " + std::to_string(FontTestLanguageIndex + 1) + "/" + std::to_string(static_cast<int>(Localization::Language::Count))
-				+ " (" + Localization::LanguageCode(lang) + ") -- which rows below show real characters, not boxes?";
+				+ " (" + std::string(Localization::LanguageCode(lang)) + ") -- which rows below show real characters, not boxes?";
 			UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(title.c_str())), kFontTestX, kFontTestY);
 
 			float y = kFontTestY + kFontTestLineHeight;
@@ -1227,7 +1245,7 @@ namespace PokerCheat
 				std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
 
 				std::int32_t personalityIndex = ReadInt(thread, kPersonalityIndexBase + seat);
-				const char* personalityLabel = Localization::PersonalityLabel(personalityIndex);
+				const std::string_view personalityLabel = Localization::PersonalityLabel(personalityIndex);
 
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 
@@ -1301,7 +1319,7 @@ namespace PokerCheat
 						<< (category >= 0 ? HandCategoryName(category) : "?")
 						<< " (stack " << stack << ", bet " << bet << ")"
 						<< stateLabel << shownVsMe << (isMe ? "  (You)" : "");
-					if (!isMe && personalityLabel[0] != '\0')
+					if (!isMe && !personalityLabel.empty())
 						line << "  [" << personalityLabel << "]";
 				}
 				DrawLine(x, y, line.str().c_str());

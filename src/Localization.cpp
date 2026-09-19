@@ -4,6 +4,7 @@
 #include "script.h" // LANGUAGE::_GET_CURRENT_LANGUAGE_ID() (natives.h, via script.h)
 
 #include <string>
+#include <string_view>
 
 namespace
 {
@@ -51,7 +52,7 @@ namespace
 	// VerdictLabel wording -- remains an unverified best-effort guess;
 	// fix a row directly here if a wording turns out to be wrong.
 	constexpr int kPersonalityLabelCount = 15;
-	const char* const kPersonalityLabels[kLanguageCount][kPersonalityLabelCount] =
+	constexpr std::string_view kPersonalityLabels[kLanguageCount][kPersonalityLabelCount] =
 	{
 		// English (en-US)
 		{ "Neutral", "Tight", "Loose", "Aggressive", "Passive", "Loose-Passive", "Tight-Passive", "Loose-Aggressive", "Tight-Aggressive", "Calling Station", "All-In Shover", "Always All-In", "Calling Station", "Push/Fold", "Pot-Cap Gate" },
@@ -100,7 +101,7 @@ namespace
 	// per-opponent tag and DrawWinPredictionStatus()'s standalone
 	// readout in PokerCheat.cpp.
 	constexpr int kVerdictLabelCount = 3;
-	const char* const kVerdictLabels[kLanguageCount][kVerdictLabelCount] =
+	constexpr std::string_view kVerdictLabels[kLanguageCount][kVerdictLabelCount] =
 	{
 		{ "(You Win)", "(They Win)", "(Tie)" },                    // en-US
 		{ "(Vous gagnez)", "(Ils gagnent)", "(Égalité)" },          // fr-FR
@@ -185,18 +186,18 @@ namespace Localization
 		return g_current;
 	}
 
-	const char* VerdictLabel(Language lang, int vsResult)
+	std::string_view VerdictLabel(Language lang, int vsResult)
 	{
 		int col = (vsResult > 0) ? 0 : (vsResult < 0) ? 1 : 2;
 		return kVerdictLabels[static_cast<int>(lang)][col];
 	}
 
-	const char* VerdictLabel(int vsResult)
+	std::string_view VerdictLabel(int vsResult)
 	{
 		return VerdictLabel(Current(), vsResult);
 	}
 
-	const char* PersonalityLabel(Language lang, std::int32_t personalityIndex)
+	std::string_view PersonalityLabel(Language lang, std::int32_t personalityIndex)
 	{
 		if (personalityIndex < 0 || personalityIndex >= kPersonalityLabelCount)
 			return "";
@@ -204,12 +205,12 @@ namespace Localization
 		return kPersonalityLabels[static_cast<int>(lang)][personalityIndex];
 	}
 
-	const char* PersonalityLabel(std::int32_t personalityIndex)
+	std::string_view PersonalityLabel(std::int32_t personalityIndex)
 	{
 		return PersonalityLabel(Current(), personalityIndex);
 	}
 
-	const char* LanguageCode(Language lang)
+	std::string_view LanguageCode(Language lang)
 	{
 		switch (lang)
 		{
