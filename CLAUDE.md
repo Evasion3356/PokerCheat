@@ -26,8 +26,7 @@ project's own code is `static_cast`/`reinterpret_cast`/`const_cast` --
 never a C-style `(Type)value` cast. No `char buf[N]` locals, `sprintf_s`,
 `strcpy_s`/`strcat_s`, or any other hand-rolled size-tracked buffer --
 `std::string`/`std::ostringstream` only for building text (see
-`BuildCardTextureName`/`FindLoadedCardSetDict`/`FormatFixed1` and the
-per-seat/board debug lines in `PokerCheat.cpp`, and `SetFloat`/
+`FormatFixed1` and the per-seat/board debug lines in `PokerCheat.cpp`, and `SetFloat`/
 `NarrowPath` in `Config.cpp`, for the established pattern). The one
 unavoidable exception is the literal call-site boundary into a
 ScriptHookRDR2 native that requires `char*` (e.g. `GRAPHICS::DRAW_SPRITE`,
@@ -41,8 +40,11 @@ either pattern when porting code between the two.
 **Strings: `std::string_view` for read-only text.** `Localization`'s
 tables are `constexpr std::string_view` and its getters return
 `std::string_view`. Per-frame Release HUD text must not allocate: build it
-into a reused `static std::string` (`BgFormatText`, `AppendInt`) rather than
-concatenating temporaries or using `ostringstream`. Debug-only text can keep
+into a reused `static std::string` (`BgFormatText`, `BuildCardTextureName`)
+rather than
+concatenating temporaries or using `ostringstream`; fixed name sets are a
+`constexpr std::string_view` table of whole literals (`kCardSetDicts`, whose
+`.data()` is null-terminated and can go straight to a native). Debug-only text can keep
 `std::string`/`ostringstream`.
 
 **Logging goes through spdlog, fmt-style, not printf-style.**

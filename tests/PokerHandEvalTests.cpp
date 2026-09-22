@@ -206,6 +206,38 @@ namespace
 		Check(a.category == 4 && b.category == 4, "both play the board straight", "5-6-7-8-9 on board beats either hand's hole cards");
 		Check(CompareHands(a, b) == 0, "identical board-straight hands chop", "neither hole card improves on the board's own straight");
 	}
+
+	// PokerCheat.cpp's ReadPredictedBoard() deliberately fills a board slot
+	// with rank -1 when the deck cursor/count read out of range, and every
+	// rank comes from raw game memory -- a wrong offset after a game update
+	// reads arbitrary values. ScoreFiveCards() indexes a count[15] array by
+	// rank, so any rank outside 2-14 must be rejected up front (category
+	// -1, which every call site already treats as "no hand") instead of
+	// writing out of bounds. Also must not silently score the remaining
+	// valid cards as if the bad one weren't there.
+	void TestInvalidRankRejected()
+	{
+		std::printf("TestInvalidRankRejected:\n");
+		std::int32_t board[5] = { 14, 14, 14, 13, -1 };
+		std::int32_t boardSuits[5] = { H, D, S, C, -1 };
+
+		HandScore sentinel = Eval7(14, C, 13, H, board, boardSuits);
+		Check(sentinel.category == -1, "-1 board rank (deck-not-ready sentinel) rejected", "must not score the other 6 cards as quad Aces");
+
+		std::int32_t garbageBoard[5] = { 2, 5, 9, 11, 1000 };
+		std::int32_t garbageSuits[5] = { H, D, S, C, H };
+		HandScore garbage = Eval7(14, C, 13, H, garbageBoard, garbageSuits);
+		Check(garbage.category == -1, "out-of-range high rank rejected", "rank 1000 would index far past count[15]");
+
+		std::int32_t lowBoard[5] = { 2, 5, 9, 11, 12 };
+		std::int32_t lowSuits[5] = { H, D, S, C, H };
+		HandScore zeroHole = Eval7(0, C, 13, H, lowBoard, lowSuits);
+		Check(zeroHole.category == -1, "rank 0 hole card rejected", "0 is what an out-of-stack-range ReadInt returns");
+
+		std::int32_t r5[5] = { 14, 13, 12, 11, 15 };
+		std::int32_t s5[5] = { H, H, H, H, H };
+		Check(PokerHandEval::ScoreFiveCards(r5, s5).category == -1, "ScoreFiveCards rejects rank 15 directly", "count[15] has no index 15");
+	}
 }
 
 int main()
@@ -219,6 +251,7 @@ int main()
 	TestStraightFlushBeatsQuads();
 	TestRoyalFlushCategory();
 	TestGenuineTieChopsThePot();
+	TestInvalidRankRejected();
 
 	if (g_failures == 0)
 	{

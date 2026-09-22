@@ -126,10 +126,51 @@ namespace PokerCheat
 	// ------------------------------------------------------------------
 	constexpr std::uint32_t kLocalStructIndex = 14;    // uLocal_14
 	constexpr std::uint32_t kFieldOffsetF114 = 114;    // uLocal_14.f_114
-	constexpr std::uint32_t kFieldOffsetTableA = 287;  // .f_287 -- Table
-	constexpr std::uint32_t kFieldOffsetTableB = 1276; // .f_1276 -- holds the REAL shuffled deck (see kDeckSlot below); hole cards/board/seats still come from Candidate A (kTableSlot)
+	constexpr std::uint32_t kFieldOffsetTableA = 287;  // .f_287 -- the UI's copy of the table (see below)
+	constexpr std::uint32_t kFieldOffsetTableB = 1276; // .f_1276 -- the authoritative game engine (see below)
 	constexpr std::uint32_t kTableSlot = kLocalStructIndex + kFieldOffsetF114 + kFieldOffsetTableA;
 	constexpr std::uint32_t kTableSlotB = kLocalStructIndex + kFieldOffsetF114 + kFieldOffsetTableB;
+
+	// How Candidate A and Candidate B relate -- traced in poker_sp.ysc.c:
+	//
+	//  - B (f_1276) is the actual poker engine. Its own state machine
+	//    (func_468, switching on B.f_535) shuffles (func_590), deals hole
+	//    cards (func_1093) and deals each street (func_1091), drawing every
+	//    card off B's deck (func_1543: card = deck[f_105], f_105++) and
+	//    appending it to B's own board/seat arrays in the same call
+	//    (func_1540, which also bumps the array's f_23 count). So B's
+	//    board, reveal count, hole cards and deck cursor are ALWAYS
+	//    mutually consistent from outside the script.
+	//  - After each step the engine calls func_435(B, eventHash), which
+	//    snapshots B's first 486 words and posts them as a minigame event
+	//    (MINIGAME::_0xE1F365C4C8F259D8). func_137 pops one queued event
+	//    into a staging copy (f_114.f_773), and it only reaches A when the
+	//    UI's per-state handler decides to consume it -- func_141 ->
+	//    func_400 -> `f_287 = { *f_773 }`. A is therefore a 486-word copy of
+	//    B's head (f_287 + 486 == f_773, f_773 + 486 == f_1259, the event
+	//    header), with the same layout for the board (f_15) and seats (f_39),
+	//    but NOT the deck: B's deck is at +606, past the snapshot, which is
+	//    why "Candidate A's deck" never looked like a live deck (A+606 is
+	//    actually inside the f_773 staging copy).
+	//  - The UI deliberately holds events back while animations play. The
+	//    state-5 handler (func_291) only PEEKS at a pending "street dealt"
+	//    event (func_376) and moves f_2010 to 6; the state-6 handler
+	//    (func_292) then applies it only once func_616 reports the dealer
+	//    is no longer mid-animation. Likewise the state-4 handler (func_290)
+	//    applies the new hand's hole-card deal only after the dealer and
+	//    both blinds are idle and func_367 passes (up to a 5 s timeout).
+	//    Throughout those windows f_2010 is already 4 or 6 (inside
+	//    DrawOverlay()'s handInProgress range), B has already dealt, and
+	//    A still shows the previous street -- or the previous HAND.
+	//
+	// So anything the prediction/evaluation depends on (board, reveal
+	// count, hole cards, fold state, deck) is read from B, where it is
+	// always consistent with the deck cursor. A is only used where the
+	// overlay has to line up with what the game is currently SHOWING: seat
+	// occupancy (the Scaleform seat-panel layout, see
+	// ComputeDenseRowForSeat()) and the visible reveal count (which board
+	// icons are drawn solid vs. ghosted).
+	constexpr std::uint32_t kBoardRevealCountOffset = 23; // f_15.f_23 -- how many board slots are filled (func_1540)
 
 	constexpr std::uint32_t kF114SeatIndexSlot = kLocalStructIndex + kFieldOffsetF114 + 9; // uLocal_14.f_114.f_9 (local player's seat)
 
@@ -188,10 +229,12 @@ namespace PokerCheat
 	constexpr std::uint32_t kLocalRawSlot = kLocalStructIndex;
 
 	constexpr std::uint32_t kBoardHeaderOffset = 15;              // Table.f_15 header (board array size, confirmed = 11)
-	constexpr std::uint32_t kBoardSlot = kTableSlot + kBoardHeaderOffset;
+	constexpr std::uint32_t kBoardSlot = kTableSlot + kBoardHeaderOffset;   // UI copy (A) -- visible reveal count only
+	constexpr std::uint32_t kBoardSlotB = kTableSlotB + kBoardHeaderOffset; // engine (B) -- real dealt cards
 
 	constexpr std::uint32_t kSeatsHeaderOffset = 39;               // Table.f_39 header (seat count, confirmed = 6)
-	constexpr std::uint32_t kSeatsDataBase = kTableSlot + kSeatsHeaderOffset + 1; // Table+40, past the header word
+	constexpr std::uint32_t kSeatsDataBase = kTableSlot + kSeatsHeaderOffset + 1; // Table+40, past the header word -- UI copy (A), seat occupancy/panel layout
+	constexpr std::uint32_t kSeatsDataBaseB = kTableSlotB + kSeatsHeaderOffset + 1; // same layout on the engine (B) -- hole cards and fold state
 	constexpr std::uint32_t kSeatStride = 56;
 	constexpr std::uint32_t kHoleCardsHeaderOffset = 7;             // seat.f_7 header
 	constexpr std::uint32_t kHoleCardsDataOffset = kHoleCardsHeaderOffset + 1; // seat.f_7 real card data
@@ -223,21 +266,15 @@ namespace PokerCheat
 	// -- no burn cards).
 	//
 	// IMPORTANT: the real, shuffled, gameplay deck lives on CANDIDATE B
-	// (f_1276), not Candidate A (f_287) that everything else in this file
-	// reads from. Traced both func_589 call sites to their enclosing
+	// (f_1276), not Candidate A (f_287). Traced both func_589 call sites to their enclosing
 	// functions: the unshuffled init (no func_1195 paired with it) is
 	// inside func_285, and the shuffled init (func_589 immediately
 	// followed by func_1195) is inside func_590 -- both of those, via
 	// their own confirmed call sites (func_285(&(uParam0->f_1276)) at
 	// line 7065, func_590(uParam0) called right after within func_285
-	// itself with the same uParam0), operate on Candidate B, not A. Hole
-	// cards/board/seat data are read from Candidate A throughout this
-	// file and confirmed correct multiple times against the real screen
-	// -- almost certainly synced/copied from Candidate B at some point,
-	// since B is where dealing actually happens (func_1093, the deal
-	// function, also touches f_606 on whatever struct it's given). Deck
-	// reads specifically use kTableSlotB here; everything else keeps
-	// using kTableSlot (Candidate A) as before.
+	// itself with the same uParam0), operate on Candidate B, not A. A is
+	// the UI's delayed copy of B's head and doesn't contain the deck at
+	// all -- see the A/B comment next to kTableSlotB.
 	constexpr std::uint32_t kDeckOffset = 606;                 // .f_606
 	constexpr std::uint32_t kDeckSlot = kTableSlotB + kDeckOffset;
 	constexpr std::uint32_t kDeckCursorOffset = 105;           // f_606.f_105 -- index of the next undrawn card
@@ -384,25 +421,28 @@ namespace PokerCheat
 		// 3=Clubs -- confirmed correct via the TEST ICON (a real Ace of
 		// Hearts drawn for suit 0), and SuitLetter() now uses the same
 		// mapping.
-		// std::string, not a fixed char[]/sprintf_s -- no manual buffer
-		// size to get wrong. Reuses RankName() above instead of a second,
-		// duplicate rank-name switch (the original version of this
-		// function predated RankName() and never got consolidated with
-		// it); this is the same simplification BlackjackCheat.cpp's own
-		// ported copy of this function already made.
-		std::string BuildCardTextureName(std::int32_t rank, std::int32_t suit)
+		// Called per card per frame from the Release HUD, so it builds into
+		// one reused buffer (same convention as BgFormatText() below) rather
+		// than returning a fresh std::string -- no heap allocation once the
+		// buffer's capacity has grown. The returned pointer is valid until
+		// the next call. Reuses RankName() above instead of a second,
+		// duplicate rank-name switch.
+		const char* BuildCardTextureName(std::int32_t rank, std::int32_t suit)
 		{
-			const char* suitName;
+			std::string_view suitName;
 			switch (suit)
 			{
 				case 0: suitName = "HEARTS_"; break;
 				case 1: suitName = "DIAMONDS_"; break;
 				case 2: suitName = "SPADES_"; break;
 				case 3: suitName = "CLUBS_"; break;
-				default: suitName = ""; break;
+				default: break;
 			}
 
-			return std::string(suitName) + RankName(rank);
+			static std::string buffer;
+			buffer.assign(suitName);
+			buffer.append(RankName(rank));
+			return buffer.c_str();
 		}
 
 		// The real card_set_N number depends on which table/location skin
@@ -410,25 +450,28 @@ namespace PokerCheat
 		// here) -- instead of reimplementing that, this just probes which
 		// card_set_N dictionary is ALREADY streamed in, since the game
 		// itself must have already loaded the correct one to be showing
-		// its own cards right now. Falls back to requesting card_set_1
-		// if none are found loaded yet (e.g. called before the table has
-		// finished setting up).
-		constexpr int kCardSetProbeLo = 1;
-		constexpr int kCardSetProbeHi = 8;
+		// its own cards right now. Returns an empty view if none are
+		// loaded yet (e.g. called before the table has finished setting
+		// up) -- see DrawOverlay() for the card_set_1 request fallback.
+		//
+		// Fixed table of string literals rather than building
+		// "card_set_" + std::to_string(n) per probe: this runs every frame
+		// in Release. Every entry views a whole string literal, so .data()
+		// is null-terminated and safe to hand to the native directly.
+		constexpr std::string_view kCardSetDicts[] = {
+			"card_set_1", "card_set_2", "card_set_3", "card_set_4",
+			"card_set_5", "card_set_6", "card_set_7", "card_set_8"
+		};
 
-		bool FindLoadedCardSetDict(std::string& outDict)
+		std::string_view FindLoadedCardSetDict()
 		{
-			for (int n = kCardSetProbeLo; n <= kCardSetProbeHi; n++)
+			for (const std::string_view dict : kCardSetDicts)
 			{
-				std::string candidate = "card_set_" + std::to_string(n);
-				if (TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(candidate.c_str())))
-				{
-					outDict = candidate;
-					return true;
-				}
+				if (TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(dict.data())))
+					return dict;
 			}
 
-			return false;
+			return {};
 		}
 
 		// 2D community-card icon strip, top-right of screen -- calibrated
@@ -457,19 +500,13 @@ namespace PokerCheat
 		// strip position above -- real revealed cards at full alpha,
 		// not-yet-revealed predicted cards (deterministic, see kDeckSlot's
 		// header comment) ghosted at reduced alpha, same real/predicted
-		// split as the text "Board:" line. Takes the already-unpacked
-		// predicted-final-board ranks/suits DrawOverlay() computes once up
-		// front (see predictedBoardBuf/boardRanks/boardSuits below) rather
-		// than re-reading memory itself.
-		void DrawCommunityCardIcons(const std::int32_t* ranks, const std::int32_t* suits, std::int32_t revealCount)
+		// split as the text "Board:" line. Takes the predicted-final-board
+		// ranks/suits DrawOverlay() reads once up front (see
+		// ReadPredictedBoard()) rather than re-reading memory itself, and
+		// the card-set dictionary DrawOverlay() already looked up for this
+		// frame (non-empty -- see FindLoadedCardSetDict()).
+		void DrawCommunityCardIcons(std::string_view cardSetDict, const std::int32_t* ranks, const std::int32_t* suits, std::int32_t revealCount)
 		{
-			std::string cardSetDict;
-			if (!FindLoadedCardSetDict(cardSetDict))
-			{
-				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
-				return;
-			}
-
 #ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
 			float baseX = cfg.Card2DIconBaseX;
@@ -490,13 +527,11 @@ namespace PokerCheat
 				if (ranks[i] < 2)
 					continue;
 
-				std::string textureName = BuildCardTextureName(ranks[i], suits[i]);
-
 				bool predicted = i >= revealCount;
 				int alpha = predicted ? kCard2DPredictedAlpha : 255;
 				float x = baseX + static_cast<float>(i) * spacingX;
 
-				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.c_str()), const_cast<char*>(textureName.c_str()), x, iconY, width, height, 0.0f, 255, 255, 255, alpha, 0);
+				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.data()), const_cast<char*>(BuildCardTextureName(ranks[i], suits[i])), x, iconY, width, height, 0.0f, 255, 255, 255, alpha, 0);
 			}
 		}
 
@@ -578,15 +613,10 @@ namespace PokerCheat
 		// personalityLabel: empty string suppresses the personality half
 		// (see Localization::PersonalityLabel()/ShowOpponentPersonality) -- the two
 		// halves are independent, either can show without the other.
-		void DrawSeatCardIcons(int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, std::string_view personalityLabel)
+		// cardSetDict: this frame's already-looked-up card-set dictionary
+		// (non-empty), same as DrawCommunityCardIcons().
+		void DrawSeatCardIcons(std::string_view cardSetDict, int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, std::string_view personalityLabel)
 		{
-			std::string cardSetDict;
-			if (!FindLoadedCardSetDict(cardSetDict))
-			{
-				TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
-				return;
-			}
-
 #ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
 			float baseX = cfg.SeatCardIconBaseX;
@@ -618,9 +648,7 @@ namespace PokerCheat
 				if (ranks[i] < 2)
 					continue;
 
-				std::string textureName = BuildCardTextureName(ranks[i], suits[i]);
-
-				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.c_str()), const_cast<char*>(textureName.c_str()), x + static_cast<float>(i) * spacingX, y, width, height, 0.0f, 255, 255, 255, 255, 0);
+				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.data()), const_cast<char*>(BuildCardTextureName(ranks[i], suits[i])), x + static_cast<float>(i) * spacingX, y, width, height, 0.0f, 255, 255, 255, 255, 0);
 			}
 
 			// (You Win)/(They Win)/(Tie) label directly below the icons,
@@ -920,8 +948,6 @@ namespace PokerCheat
 
 #endif // _DEBUG
 
-		constexpr std::size_t kHandEvalBufWords = 64;
-
 		// Hand-scoring/comparison logic lives in its own header
 		// (PokerHandEval.h) with zero game dependencies, specifically so
 		// tests/PokerHandEvalTests.cpp can link against the exact same
@@ -931,58 +957,58 @@ namespace PokerCheat
 		using PokerHandEval::EvaluateHand;
 		using PokerHandEval::CompareHands;
 
-		// Builds a synthetic board buffer combining the REAL revealed
-		// cards with PREDICTED future cards read straight from the deck
-		// (see kDeckOffset's header comment -- the deck is fully shuffled
-		// and fixed from hand start, so this isn't a guess), formatted to
-		// match Table.f_15's real layout exactly (header word, up to 11
-		// {rank,suit} card slots, reveal-count field at offset 23) so the
-		// hand-eval native accepts it exactly like the real board. Always
-		// sets the reveal-count to 5, so every hand gets evaluated
-		// against the predicted FINAL board, not just what's currently
-		// shown on screen -- this is what lets the overlay show the
-		// predicted outcome from the very first frame of preflop.
-		void BuildPredictedBoard(rage::scrThread* thread, std::int32_t revealCount, std::int32_t deckCursor, std::int32_t deckCount, std::uint64_t* outBuf)
+		constexpr int kBoardCardCount = 5;
+
+		// Reads the predicted FINAL board: the cards the engine has REALLY
+		// dealt so far (the first engineRevealCount slots of B's Table.f_15)
+		// followed by PREDICTED future cards read straight off the deck at
+		// the current cursor (see kDeckOffset's header comment -- the deck
+		// is fully shuffled and fixed from hand start, so this isn't a
+		// guess). This is what lets every hand be evaluated against the
+		// eventual board from the very first frame of preflop.
+		//
+		// The dealt cards, engineRevealCount and deckCursor must all come
+		// from B: B deals a street by drawing from the deck and appending to
+		// its own board in the same call, so they always agree. The UI copy
+		// (A) can lag several frames behind B (see the A/B comment next to
+		// kTableSlotB) -- pairing A's reveal count with B's cursor made the
+		// prediction skip the just-dealt cards and pull in cards that are
+		// never dealt, for as long as the dealer's animation held the UI
+		// back.
+		//
+		// Slots that can't be filled because deckCursor/deckCount read as
+		// out of range are set to -1/-1 (EvaluateHand() rejects those).
+		// Returns how many slots were actually filled (5 unless the deck
+		// ran out) -- the one source for the hand evaluation, the
+		// PredictionCheck snapshot, and the Debug "Board:" text line.
+		int ReadPredictedBoard(rage::scrThread* thread, std::int32_t engineRevealCount, std::int32_t deckCursor, std::int32_t deckCount,
+			std::int32_t (&outRanks)[kBoardCardCount], std::int32_t (&outSuits)[kBoardCardCount])
 		{
-			for (std::size_t i = 0; i < kHandEvalBufWords; i++)
-				outBuf[i] = 0;
-
-			outBuf[0] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(ReadInt(thread, kBoardSlot))); // real header (=11)
-
+			int filled = 0;
 			std::int32_t deckIndex = deckCursor;
-			for (std::int32_t i = 0; i < 5; i++)
+			for (std::int32_t i = 0; i < kBoardCardCount; i++)
 			{
-				std::int32_t rank;
-				std::int32_t suit;
-
-				if (i < revealCount)
+				if (i < engineRevealCount)
 				{
-					rank = ReadInt(thread, kBoardSlot + 1 + i * 2);
-					suit = ReadInt(thread, kBoardSlot + 1 + i * 2 + 1);
+					outRanks[i] = ReadInt(thread, kBoardSlotB + 1 + i * 2);
+					outSuits[i] = ReadInt(thread, kBoardSlotB + 1 + i * 2 + 1);
+					filled++;
 				}
 				else if (deckIndex >= 0 && deckIndex < deckCount)
 				{
-					rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIndex) * 2);
-					suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIndex) * 2 + 1);
+					outRanks[i] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIndex) * 2);
+					outSuits[i] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIndex) * 2 + 1);
 					deckIndex++;
+					filled++;
 				}
 				else
 				{
-					rank = -1;
-					suit = -1;
+					outRanks[i] = -1;
+					outSuits[i] = -1;
 				}
-
-				outBuf[1 + static_cast<std::size_t>(i) * 2] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(rank));
-				outBuf[1 + static_cast<std::size_t>(i) * 2 + 1] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(suit));
 			}
 
-			for (std::int32_t i = 5; i < 11; i++)
-			{
-				outBuf[1 + static_cast<std::size_t>(i) * 2] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(-1));
-				outBuf[1 + static_cast<std::size_t>(i) * 2 + 1] = static_cast<std::uint64_t>(static_cast<std::uint32_t>(-1));
-			}
-
-			outBuf[23] = 5; // force "5 valid board cards" -- predicted-final board
+			return filled;
 		}
 
 		// Maps each OTHER (non-you) seat to a DENSE row index (1, 2, 3...
@@ -1027,8 +1053,7 @@ namespace PokerCheat
 			if (!thread)
 				return;
 
-			void* boardPtr = GamePointers::GetScriptLocalAddress(thread, kBoardSlot);
-			if (!boardPtr)
+			if (!GamePointers::IsScriptLocalInRange(thread, kBoardSlot))
 				return;
 
 			std::int32_t mySeat = ReadInt(thread, kF114SeatIndexSlot);
@@ -1062,28 +1087,56 @@ namespace PokerCheat
 			std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
 			bool handInProgress = (handState >= 4 && handState <= 7);
 
-			// Read once up front, reused for the predicted board, the
-			// "Upcoming" line, and the real "Board" line below.
-			std::int32_t revealCount = ReadInt(thread, kBoardSlot + 23); // f_15.f_23
+			// Two reveal counts, on purpose (see the A/B comment next to
+			// kTableSlotB): revealCount is what the game is currently
+			// SHOWING (A) and only decides which icons are drawn solid vs.
+			// ghosted; engineRevealCount is what has really been dealt (B)
+			// and is what the prediction is built from, together with B's
+			// deck cursor. They differ only while the UI is holding a
+			// "street dealt" event back for the dealer's animation.
+			std::int32_t revealCount = ReadInt(thread, kBoardSlot + kBoardRevealCountOffset);
+			std::int32_t engineRevealCount = ReadInt(thread, kBoardSlotB + kBoardRevealCountOffset);
 			std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
 			std::int32_t deckCount = ReadInt(thread, kDeckSlot + kDeckCountOffset);
 
-			std::uint64_t predictedBoardBuf[kHandEvalBufWords] = {};
-			BuildPredictedBoard(thread, revealCount, deckCursor, deckCount, predictedBoardBuf);
-
-			// Plain rank/suit ints for the predicted final board's 5 cards,
-			// pulled straight out of predictedBoardBuf -- this is the same
-			// data BuildPredictedBoard already computed (real revealed
-			// cards + deterministic future cards off the deck), just
-			// unpacked once here so EvaluateHand() (below) can score every
-			// seat's best 7-card hand directly, with no native call
-			// involved.
-			std::int32_t boardRanks[5];
-			std::int32_t boardSuits[5];
-			for (int i = 0; i < 5; i++)
+#ifdef _DEBUG
+			// Live confirmation of the UI-lags-engine window traced from
+			// the decompile: logs every change to the (UI reveal count,
+			// engine reveal count, f_2010) triple, so the log shows exactly
+			// how long -- and in which UI states -- the two counts disagree.
+			static std::int32_t s_lastUiReveal = -999;
+			static std::int32_t s_lastEngineReveal = -999;
+			static std::int32_t s_lastHandState = -999;
+			if (revealCount != s_lastUiReveal || engineRevealCount != s_lastEngineReveal || handState != s_lastHandState)
 			{
-				boardRanks[i] = static_cast<std::int32_t>(predictedBoardBuf[1 + static_cast<std::size_t>(i) * 2]);
-				boardSuits[i] = static_cast<std::int32_t>(predictedBoardBuf[1 + static_cast<std::size_t>(i) * 2 + 1]);
+				Log::Write("SyncCheck: UI (A) reveal={} engine (B) reveal={} deck cursor={} f_2010={}{}",
+					revealCount, engineRevealCount, deckCursor, handState,
+					revealCount != engineRevealCount ? "  <-- UI lagging engine" : "");
+				s_lastUiReveal = revealCount;
+				s_lastEngineReveal = engineRevealCount;
+				s_lastHandState = handState;
+			}
+#endif
+
+			// Predicted final board (real dealt cards + deterministic
+			// future cards off the deck), read once and reused by
+			// EvaluateHand() for every seat, the PredictionCheck snapshot,
+			// the community-card icons, and the Debug "Board:" line.
+			std::int32_t boardRanks[kBoardCardCount];
+			std::int32_t boardSuits[kBoardCardCount];
+			const int boardCardsFilled = ReadPredictedBoard(thread, engineRevealCount, deckCursor, deckCount, boardRanks, boardSuits);
+
+			// Looked up once per frame and shared by every icon draw below,
+			// instead of re-probing all 8 card_set_N dictionaries per call.
+			// Only needed while a hand is in progress (no icons draw
+			// otherwise). If none is loaded yet, request card_set_1 and
+			// skip this frame's icons.
+			std::string_view cardSetDict;
+			if (handInProgress)
+			{
+				cardSetDict = FindLoadedCardSetDict();
+				if (cardSetDict.empty())
+					TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
 			}
 
 			// PREDICTION-VS-REALITY CHECK: two back-to-back "predicted win,
@@ -1095,17 +1148,21 @@ namespace PokerCheat
 			// the REAL board once revealCount reaches 5 -- see the matching
 			// block after the per-seat loop below. This settles, with a
 			// log line instead of memory/guesswork, whether the predicted
-			// cards actually match what gets dealt.
+			// cards actually match what gets dealt. Both ends use the
+			// engine's (B's) board and reveal count, the same source as
+			// the prediction: comparing against the UI copy (A) would, in
+			// the new-hand window where A still holds the previous hand's
+			// full board, log a spurious MISMATCH against the wrong hand.
 			static std::int32_t s_preflopCursorSnapshot = -999;
 			static std::int32_t s_preflopPredRank[5] = {};
 			static std::int32_t s_preflopPredSuit[5] = {};
 			static bool s_showdownLogged = false;
-			if (revealCount == 0 && deckCursor != s_preflopCursorSnapshot && deckCursor >= 0)
+			if (engineRevealCount == 0 && deckCursor != s_preflopCursorSnapshot && deckCursor >= 0)
 			{
-				for (int i = 0; i < 5; i++)
+				for (int i = 0; i < kBoardCardCount; i++)
 				{
-					s_preflopPredRank[i] = static_cast<std::int32_t>(predictedBoardBuf[1 + static_cast<std::size_t>(i) * 2]);
-					s_preflopPredSuit[i] = static_cast<std::int32_t>(predictedBoardBuf[1 + static_cast<std::size_t>(i) * 2 + 1]);
+					s_preflopPredRank[i] = boardRanks[i];
+					s_preflopPredSuit[i] = boardSuits[i];
 				}
 				s_preflopCursorSnapshot = deckCursor;
 				s_showdownLogged = false;
@@ -1117,15 +1174,15 @@ namespace PokerCheat
 					RankName(s_preflopPredRank[3]), SuitLetter(s_preflopPredSuit[3]),
 					RankName(s_preflopPredRank[4]), SuitLetter(s_preflopPredSuit[4]));
 			}
-			if (revealCount >= 5 && !s_showdownLogged && s_preflopCursorSnapshot != -999)
+			if (engineRevealCount >= 5 && !s_showdownLogged && s_preflopCursorSnapshot != -999)
 			{
 				bool allMatch = true;
 				std::string realStr;
 				std::string predStr;
 				for (int i = 0; i < 5; i++)
 				{
-					std::int32_t realRank = ReadInt(thread, kBoardSlot + 1 + i * 2);
-					std::int32_t realSuit = ReadInt(thread, kBoardSlot + 1 + i * 2 + 1);
+					std::int32_t realRank = ReadInt(thread, kBoardSlotB + 1 + i * 2);
+					std::int32_t realSuit = ReadInt(thread, kBoardSlotB + 1 + i * 2 + 1);
 					realStr += RankName(realRank);
 					realStr += SuitLetter(realSuit);
 					realStr += ' ';
@@ -1170,7 +1227,7 @@ namespace PokerCheat
 				0.36f + kPanelPadding * 2.0f,
 				kMaxLines * kLineHeight + kPanelPadding * 2.0f);
 
-			DrawLine(x, y, revealCount >= 5 ? "PokerCheat" : "PokerCheat (predicted final hands)", true);
+			DrawLine(x, y, engineRevealCount >= 5 ? "PokerCheat" : "PokerCheat (predicted final hands)", true);
 			y += kLineHeight;
 #endif
 
@@ -1184,7 +1241,9 @@ namespace PokerCheat
 			bool haveMyHand = false;
 			if (handInProgress && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
 			{
-				std::uint32_t myBase = kSeatsDataBase + static_cast<std::uint32_t>(mySeat) * kSeatStride;
+				// Hole cards from the engine (B), same source as the board --
+				// see the A/B comment next to kTableSlotB.
+				std::uint32_t myBase = kSeatsDataBaseB + static_cast<std::uint32_t>(mySeat) * kSeatStride;
 				std::uint32_t myCardsBase = myBase + kHoleCardsDataOffset;
 				std::int32_t myCard0Rank = ReadInt(thread, myCardsBase + 0);
 				std::int32_t myCard0Suit = ReadInt(thread, myCardsBase + 1);
@@ -1213,7 +1272,15 @@ namespace PokerCheat
 
 			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
+				// Occupancy (and the Debug stack/bet text) from the UI copy
+				// (A), so rows line up with the seat panels the game is
+				// actually showing -- the same source ComputeDenseRowForSeat()
+				// uses. Fold state and hole cards from the engine (B), the
+				// same source as the predicted board, so every seat is
+				// evaluated against cards from the same moment -- see the A/B
+				// comment next to kTableSlotB.
 				std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
+				std::uint32_t engineSeatBase = kSeatsDataBaseB + seat * kSeatStride;
 
 				// func_143's own check (Table.f_39[seat] != -1, word 0 of
 				// the seat struct) -- is anyone seated here at all.
@@ -1226,7 +1293,7 @@ namespace PokerCheat
 				// 1=folded, 2=all-in) -- func_475's call site (line ~9430)
 				// draws a "folded" status icon exactly when f_6==1,
 				// confirming the mapping.
-				std::int32_t state = ReadInt(thread, seatBase + 6);
+				std::int32_t state = ReadInt(thread, engineSeatBase + 6);
 				bool isActive = (state == 0 || state == 2); // still eligible to win the pot
 
 #ifdef _DEBUG
@@ -1238,7 +1305,7 @@ namespace PokerCheat
 				std::int32_t bet = ReadInt(thread, seatBase + 3);
 #endif
 
-				std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
+				std::uint32_t cardsBase = engineSeatBase + kHoleCardsDataOffset;
 				std::int32_t card0Rank = ReadInt(thread, cardsBase + 0);
 				std::int32_t card0Suit = ReadInt(thread, cardsBase + 1);
 				std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
@@ -1345,8 +1412,8 @@ namespace PokerCheat
 				if (!isMe && isActive && cfg.ShowOthersCards)
 				{
 					int denseRow = denseRowForSeat[seat];
-					if (denseRow != 0)
-						DrawSeatCardIcons(denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult, personalityLabel);
+					if (denseRow != 0 && !cardSetDict.empty())
+						DrawSeatCardIcons(cardSetDict, denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult, personalityLabel);
 				}
 			}
 
@@ -1356,13 +1423,13 @@ namespace PokerCheat
 			// real revealed cards, correctly reading "(preflop)" with
 			// nothing revealed yet, and a separate "Upcoming:" line for
 			// the prediction -- which read correctly but wasn't where
-			// the prediction was expected to show up). Already-revealed
-			// cards are read from the real board (kBoardSlot); anything
-			// not revealed yet is the exact future card read straight off
+			// the prediction was expected to show up). Already-dealt
+			// cards are read from the engine's board (kBoardSlotB); anything
+			// not dealt yet is the exact future card read straight off
 			// the deck at the current cursor (see kDeckOffset's header
-			// comment -- deterministic, not a guess) and marked with a
-			// trailing "*" so it's clear which cards are real right now
-			// vs. predicted. Gated by ShowCommunityCards -- both the text
+			// comment -- deterministic, not a guess). Anything the game
+			// isn't SHOWING yet (index >= the UI copy's revealCount) is
+			// marked with a trailing "*" / drawn ghosted. Gated by ShowCommunityCards -- both the text
 			// line and the 2D icon strip; boardRanks/boardSuits (used for
 			// hand evaluation above) are computed unconditionally either
 			// way. Also gated by handInProgress -- between hands the
@@ -1373,50 +1440,25 @@ namespace PokerCheat
 			{
 #ifdef _DEBUG
 				// Debug-only text rendering of the same board data the
-				// icon strip below draws -- boardRanks/boardSuits (used by
-				// DrawCommunityCardIcons()) are computed unconditionally
-				// above, independent of this text line entirely.
+				// icon strip below draws. ReadPredictedBoard() fills the
+				// revealed slots first and stops filling at the first deck
+				// read that's out of range, so the first boardCardsFilled
+				// slots are exactly the cards there are to show.
 				std::ostringstream boardLine;
 				boardLine << "Board: ";
-				std::int32_t deckIdx = deckCursor;
-				int cardsShown = 0;
-				for (int i = 0; i < 5; i++)
+				for (int i = 0; i < boardCardsFilled; i++)
 				{
-					std::int32_t rank;
-					std::int32_t suit;
-					bool predicted;
-
-					if (i < revealCount)
-					{
-						rank = ReadInt(thread, kBoardSlot + 1 + i * 2);
-						suit = ReadInt(thread, kBoardSlot + 1 + i * 2 + 1);
-						predicted = false;
-					}
-					else if (deckIdx >= 0 && deckIdx < deckCount)
-					{
-						rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIdx) * 2);
-						suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIdx) * 2 + 1);
-						deckIdx++;
-						predicted = true;
-					}
-					else
-					{
-						break; // deck cursor/count read as invalid -- see below
-					}
-
-					boardLine << RankName(rank) << SuitLetter(suit) << (predicted ? "*" : "") << ' ';
-					cardsShown++;
+					bool predicted = i >= revealCount;
+					boardLine << RankName(boardRanks[i]) << SuitLetter(boardSuits[i]) << (predicted ? "*" : "") << ' ';
 				}
 
-				// If the loop above stopped early for a reason OTHER than "the
-				// board is genuinely fully revealed already" (revealCount>=5
-				// needs no deck reads at all, so cardsShown==5 there with no
-				// deck involvement), that means deckCursor/deckCount read as
-				// out of range -- e.g. the deck hasn't been shuffled/dealt
-				// yet at the moment this ran. That's a real, different
-				// situation from "nothing left to predict" and shouldn't look
-				// the same on screen.
-				if (cardsShown < 5 && revealCount < 5)
+				// Fewer than 5 filled means deckCursor/deckCount read as out
+				// of range (a fully dealt board always fills all 5 without
+				// touching the deck) -- e.g. the deck hasn't been
+				// shuffled/dealt yet at the moment this ran. That's a real,
+				// different situation from "nothing left to predict" and
+				// shouldn't look the same on screen.
+				if (boardCardsFilled < kBoardCardCount)
 					boardLine << "(deck not ready -- cursor/count out of range)";
 
 				DrawLine(x, y, boardLine.str().c_str());
@@ -1427,7 +1469,8 @@ namespace PokerCheat
 				// position, using the same real/predicted split as the text
 				// "Board:" line above (boardRanks/boardSuits already hold the
 				// predicted-final-board's 5 cards, computed once up front).
-				DrawCommunityCardIcons(boardRanks, boardSuits, revealCount);
+				if (!cardSetDict.empty())
+					DrawCommunityCardIcons(cardSetDict, boardRanks, boardSuits, revealCount);
 			}
 
 			// Real verdict, predicted to showdown -- CompareHands() above
@@ -1601,7 +1644,7 @@ namespace PokerCheat
 	// analysis (watching values change in real time, "find what writes
 	// to this address", etc.) instead of only ever probing one guessed
 	// offset at a time through this mod's own F10 tools. Same addressing
-	// GamePointers::ReadScriptLocal/GetScriptLocalAddress already use --
+	// GamePointers::ReadScriptLocal already uses --
 	// thread->m_Stack is the base, m_Context.m_StackSize is the slot
 	// count, 8 bytes/slot -- so end = base + m_StackSize*8. Also logs
 	// uLocal_14's own absolute address within that range (slot

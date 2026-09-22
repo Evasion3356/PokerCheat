@@ -56,26 +56,17 @@ namespace GamePointers
 		return nullptr;
 	}
 
+	bool IsScriptLocalInRange(rage::scrThread* thread, std::uint32_t index)
+	{
+		return thread && thread->m_Stack && index < thread->m_Context.m_StackSize;
+	}
+
 	void* ReadScriptLocal(rage::scrThread* thread, std::uint32_t index)
 	{
-		if (!thread || !thread->m_Stack)
-			return nullptr;
-
-		if (thread->m_Context.m_StackSize <= index)
+		if (!IsScriptLocalInRange(thread, index))
 			return nullptr;
 
 		return reinterpret_cast<void**>(thread->m_Stack)[index];
-	}
-
-	void* GetScriptLocalAddress(rage::scrThread* thread, std::uint32_t index)
-	{
-		if (!thread || !thread->m_Stack)
-			return nullptr;
-
-		if (thread->m_Context.m_StackSize <= index)
-			return nullptr;
-
-		return reinterpret_cast<void**>(thread->m_Stack) + index;
 	}
 
 	bool DumpLocalStackJsonl(rage::scrThread* thread, std::uint32_t startSlot, std::uint32_t count, const std::string& outPath)

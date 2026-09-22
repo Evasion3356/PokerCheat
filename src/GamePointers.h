@@ -35,13 +35,11 @@ namespace GamePointers
 	// or the index is out of its declared stack size.
 	void* ReadScriptLocal(rage::scrThread* thread, std::uint32_t index);
 
-	// Returns the ADDRESS of script-local slot `index` -- i.e.
-	// thread->m_Stack + index*8 itself, not what's stored there. Needed
-	// to build pointers for native calls that take a script struct by
-	// reference (e.g. MINIGAME::_0x32A7C216344D623B's hole/board
-	// pointers), since those structs live inline in the thread's own
-	// local array, not behind a separately-stored pointer.
-	void* GetScriptLocalAddress(rage::scrThread* thread, std::uint32_t index);
+	// True if `thread` has a stack and script-local slot `index` is within
+	// its declared stack size -- the same check ReadScriptLocal applies,
+	// for callers that need to tell "slot is out of range" apart from
+	// "slot legitimately holds 0" before trusting a whole struct's reads.
+	bool IsScriptLocalInRange(rage::scrThread* thread, std::uint32_t index);
 
 	// Dumps every script-local slot of `thread` (or just [startSlot,
 	// startSlot+count) for the overload below) to a JSONL file at

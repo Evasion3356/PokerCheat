@@ -55,10 +55,25 @@ namespace PokerHandEval
 		}
 	}
 
+	// Ranks come straight out of game memory (and PokerCheat.cpp uses -1 as
+	// its own "no card" sentinel), and ScoreFiveCards() indexes a count[15]
+	// array by rank -- anything outside 2-14 would write out of bounds.
+	inline bool IsValidRank(std::int32_t rank)
+	{
+		return rank >= 2 && rank <= 14;
+	}
+
 	// Scores exactly 5 cards (ranks 2-14, suits whatever encoding -- only
-	// equality matters here) using standard poker hand rules.
+	// equality matters here) using standard poker hand rules. Returns
+	// category -1 (no hand) if any rank is outside 2-14.
 	inline HandScore ScoreFiveCards(std::int32_t ranks[5], std::int32_t suits[5])
 	{
+		for (int i = 0; i < 5; i++)
+		{
+			if (!IsValidRank(ranks[i]))
+				return HandScore{};
+		}
+
 		std::int32_t sorted[5] = { ranks[0], ranks[1], ranks[2], ranks[3], ranks[4] };
 		SortDescending5(sorted);
 
@@ -182,9 +197,19 @@ namespace PokerHandEval
 	// kicker" -- an unpaired board card is fair game as anyone's kicker
 	// if their hole cards don't beat it, which a hole-cards-only shortcut
 	// would get wrong (see tests/PokerHandEvalTests.cpp's BoardKicker
-	// case, taken from a real reported hand).
+	// case, taken from a real reported hand). Returns category -1 (no hand)
+	// if ANY of the 7 ranks is outside 2-14 -- checked up front rather
+	// than left to ScoreFiveCards(), since the combos that happen to skip
+	// the bad card would otherwise still score and the result would
+	// silently be a best-of-6 hand.
 	inline HandScore EvaluateHand(std::int32_t ranks[7], std::int32_t suits[7])
 	{
+		for (int i = 0; i < 7; i++)
+		{
+			if (!IsValidRank(ranks[i]))
+				return HandScore{};
+		}
+
 		static const int kCombos5of7[21][5] = {
 			{ 0, 1, 2, 3, 4 }, { 0, 1, 2, 3, 5 }, { 0, 1, 2, 3, 6 }, { 0, 1, 2, 4, 5 }, { 0, 1, 2, 4, 6 },
 			{ 0, 1, 2, 5, 6 }, { 0, 1, 3, 4, 5 }, { 0, 1, 3, 4, 6 }, { 0, 1, 3, 5, 6 }, { 0, 1, 4, 5, 6 },
