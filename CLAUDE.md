@@ -131,6 +131,18 @@ In-game: press F10 for the test menu (NUMPAD 8/2 move, NUMPAD 5 select,
 NUMPAD 0/Backspace/F10 back -- same controls as `CollectorOffline` and the
 ScriptHookRDR2 SDK's own NativeTrainer sample).
 
+## Releasing
+
+Add a `## [X.Y.Z] - date` entry to `docs/CHANGELOG.md`, commit it, then push an
+`X.Y` tag (`git tag -a X.Y -m "X.Y.Z - summary"`, `git push origin
+master X.Y`). `.github/workflows/release.yml` then runs every unit test
+project under `tests/`, builds the Release `.asi` on a GitHub Windows runner
+(deploy step off), and publishes a GitHub release named "PokerCheat X.Y.Z" with
+that changelog entry as its notes and the `.asi` attached. To release an
+existing tag again, use "Run workflow" on the Actions tab and enter the tag.
+The projects target toolset v145 (VS 2026); if the runner only has an older
+Visual Studio, the workflow builds with v143 instead.
+
 ## Source layout
 
 - `src/main.cpp` -- `DllMain`, registers `ScriptMain` with ScriptHookRDR2
