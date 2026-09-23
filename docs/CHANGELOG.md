@@ -24,6 +24,10 @@ tracks what an end user experiences, not internal implementation history
   finished unpacking itself. Startup work moved out of the DLL's load
   callback, and a failed memory scan is retried instead of leaving the mod
   inactive for the whole session.
+- Settings work in a game folder that can't be written, too:
+  `PokerCheat.ini` is then saved to `%LOCALAPPDATA%\RDR2ASIMods\PokerCheat.ini`
+  (starting from the game folder's copy, if there is one) instead of the
+  mod being stuck on default settings.
 
 ### Changed
 - The Release HUD no longer allocates memory every frame.

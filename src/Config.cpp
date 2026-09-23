@@ -1,5 +1,6 @@
 #include "Config.h"
 #include "Log.h"
+#include "LogFallback.h"
 
 #include "..\external\inipp\inipp\inipp.h"
 
@@ -17,42 +18,20 @@ namespace
 	Config::Values g_values;
 	bool g_loaded = false; // true once a load has actually finished and published g_values
 
-	// Resolves PokerCheat.ini next to this DLL's own .asi, from the
-	// DLL's own module handle rather than trusting the process's CWD to
-	// match the game folder. Returns a WIDE path deliberately: opening
-	// the file below uses MSVC's wide-char ifstream/ofstream constructor
-	// overloads directly, so there's no narrow<->wide conversion
-	// anywhere in this file at all (a real contributor to the crashes
-	// the previous, mINI-based version of this file hit -- see
-	// Config.h's header comment). Function-local static ("magic
-	// static") for thread-safe exactly-once initialization -- C++11
-	// guarantees this is safe even if two threads call it concurrently
-	// for the first time.
-	const std::wstring& ResolveIniPath()
+	// Where PokerCheat.ini is loaded from and saved to: next to the .asi, or
+	// %LOCALAPPDATA%\RDR2ASIMods\PokerCheat.ini when the game folder isn't
+	// writable -- starting from the game folder's copy if there is one (see
+	// LogFallback::ResolveSettings). Resolved once per session.
+	const LogFallback::SettingsPaths& IniPaths()
 	{
-		static const std::wstring path = []() -> std::wstring
-		{
-			HMODULE hModule = nullptr;
-			GetModuleHandleExA(
-				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-				reinterpret_cast<LPCSTR>(&ResolveIniPath),
-				&hModule);
-
-			wchar_t modulePath[MAX_PATH] = {};
-			GetModuleFileNameW(hModule, modulePath, MAX_PATH);
-
-			wchar_t drive[_MAX_DRIVE], dir[_MAX_DIR];
-			_wsplitpath_s(modulePath, drive, _MAX_DRIVE, dir, _MAX_DIR, nullptr, 0, nullptr, 0);
-
-			return std::wstring(drive) + dir + L"PokerCheat.ini";
-		}();
-
-		return path;
+		static const LogFallback::SettingsPaths paths = LogFallback::ResolveSettings(
+			LogFallback::ModuleDirectory(), L"PokerCheat.ini", LogFallback::FallbackDirectory());
+		return paths;
 	}
 
 	// Log::Write's format strings are narrow (fmt/spdlog, not wide) --
-	// this narrows ResolveIniPath()'s std::wstring for the two log lines
-	// that mention it, via the real Win32 conversion API rather than a
+	// this narrows the INI's std::wstring path for the log lines that
+	// mention it, via the real Win32 conversion API rather than a
 	// naive per-character truncation (which would mangle any non-ASCII
 	// byte in the game's install path).
 	std::string NarrowPath(const std::wstring& wide)
@@ -111,7 +90,7 @@ namespace
 	{
 		inipp::Ini<char> ini;
 		{
-			std::ifstream is(ResolveIniPath()); // MSVC extension: ifstream accepts a wide filename directly
+			std::ifstream is(IniPaths().read); // MSVC extension: ifstream accepts a wide filename directly
 			if (is)
 				ini.parse(is);
 			// fine if the file doesn't exist yet (is fails to open) --
@@ -204,16 +183,20 @@ namespace
 		SetFloat(seatIcons, "LabelOffsetY", g_values.SeatCardIconLabelOffsetY);
 #endif
 
+		if (IniPaths().usedFallback)
+			Log::Write("Config::Reload -- the game folder isn't writable, so settings are saved to {}",
+				LogFallback::ToUtf8(IniPaths().write));
+
 		{
-			std::ofstream os(ResolveIniPath(), std::ios::trunc);
+			std::ofstream os(IniPaths().write, std::ios::trunc);
 			if (os)
 				ini.generate(os);
 			else
-				Log::Write("Config::Reload -- failed to open {} for writing", NarrowPath(ResolveIniPath()));
+				Log::Write("Config::Reload -- failed to open {} for writing", NarrowPath(IniPaths().write));
 		}
 
 		Log::Write("Config::Reload -- loaded from {} (ShowCommunityCards={} ShowOthersCards={} ShowWinPrediction={})",
-			NarrowPath(ResolveIniPath()), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction);
+			NarrowPath(IniPaths().read), g_values.ShowCommunityCards, g_values.ShowOthersCards, g_values.ShowWinPrediction);
 	}
 }
 
