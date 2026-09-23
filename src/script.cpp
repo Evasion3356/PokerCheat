@@ -18,6 +18,7 @@
 #include "PokerCheat.h"
 #include "Config.h"
 #include "Localization.h"
+#include "GamePointers.h"
 
 namespace
 {
@@ -60,7 +61,9 @@ void ScriptMain()
 {
 	Log::Write("PokerCheat started");
 
-	// Config is loaded from DllMain now, not here -- see main.cpp.
+	// Startup work that used to live in DllMain -- see main.cpp for why.
+	Config::Reload();
+	GamePointers::GetScriptThreads();
 
 #ifdef _DEBUG
 	// Debug-only -- the F10 test menu (toggle, probes, calibration/font

@@ -1,9 +1,9 @@
 #pragma once
 
 // Poker advisor: reads live hole cards for every seat + the board directly
-// out of poker_sp's own script memory, and calls the game's own hand-rank
-// native on them to draw an on-screen HUD showing everyone's cards and
-// hand strength. See the header comment in PokerCheat.cpp for the full
+// out of poker_sp's own script memory, scores every hand with its own
+// evaluator (PokerHandEval.h -- not the game's hand-rank native), and draws
+// an on-screen HUD showing everyone's cards and the predicted result. See the header comment in PokerCheat.cpp for the full
 // confirmed struct layout and docs/JOURNAL.md for how it was derived.
 namespace PokerCheat
 {

@@ -90,10 +90,24 @@ guessing from static analysis: `/MTd` static debug CRT, optimizations
 disabled, and a PDB deployed alongside the `.asi` by the same
 `PostBuildEvent`.
 
-Runtime log: `<game folder>\PokerCheat.log`, written by `Log::Write` (see
-`src/Log.h`).
+Runtime log: `<game folder>\PokerCheat.log` -- or
+`%LOCALAPPDATA%\RDR2ASIMods\PokerCheat.log` when the game folder isn't
+writable (e.g. a C:\Program Files install; the file's first line then names
+the rejected path). See `src/LogFallback.h`, vendored identically into every
+sibling project.
 
 ## Tests
+
+`tests/LogFallbackTests.vcxproj` checks that logging falls back to
+`%LOCALAPPDATA%\RDR2ASIMods\` instead of throwing when the game folder can't
+be written (it points the logger at `C:\Windows\System32` -- skipped when run
+elevated -- and at a path through a regular file). Same test, vendored into
+every sibling project:
+
+```
+"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" tests\LogFallbackTests.vcxproj /p:Configuration=Debug /p:Platform=x64 /nologo /v:minimal
+bin\Debug\LogFallbackTests.exe
+```
 
 `tests/PokerHandEvalTests.vcxproj` unit-tests `src/PokerHandEval.h` (the
 poker hand scorer/comparator) in complete isolation from the game --
@@ -141,7 +155,7 @@ ScriptHookRDR2 SDK's own NativeTrainer sample).
 
 ## External resources
 
-- `D:\Backup\Stuff\RDR2 Shit\Scripts\rdr2-scripts-decompiled\1491.50\script_rel\poker_sp.ysc.c`
+- `D:\Backup\Stuff\RDR2 Shit\Scripts\1491.50\script_rel\poker_sp.ysc.c`
   -- the actual target, already decompiled for our exact game build
   (1491.50), ~58k lines. No decompilation work needed, just tracing.
 - Same folder: `act_gen_poker.ysc.c` (~44k lines) -- likely the shared

@@ -43,10 +43,9 @@
 	    at Table+40 + i*56 (56 words/seat). Per seat: hole cards header at
 	    seat_base+7, real card data at seat_base+8 (2 words each).
 	  - Card = {rank: 2-14 (11=J,12=Q,13=K,14=A), suit: 0-3}. Suit mapping
-	    confirmed against two real dealt cards (a 7 of Diamonds and a King
-	    of Spades): 0=Clubs, 1=Diamonds, 2=Hearts, 3=Spades (standard
-	    bridge/alphabetical order -- 0 and 2 inferred from the ordering,
-	    not yet independently confirmed by a real card).
+	    0=Hearts, 1=Diamonds, 2=Spades, 3=Clubs -- poker_sp's own func_1599
+	    mapping, confirmed via the TEST ICON experiment (see SuitLetter()).
+	    An earlier 0=Clubs/3=Spades reading here was a misread.
 
 	Hand ranking: ScoreFiveCards()/EvaluateHand() below implement standard
 	poker hand evaluation directly (best 5 of the 2 hole + 5 board cards,
@@ -1264,6 +1263,11 @@ namespace PokerCheat
 			// one), -1 = losing to at least one opponent.
 			int worstResult = 1;
 			bool anyOpponent = false;
+			// An opponent still in the pot whose hand couldn't be evaluated
+			// (hole cards not readable yet / mid-update). Without this, a
+			// table where no opponent was comparable fell through to the
+			// "no opponents left" case and showed a confident (You Win).
+			bool anyOpponentUnreadable = false;
 
 			// 0 means "you, or no seat maps here" -- see
 			// ComputeDenseRowForSeat()'s header comment.
@@ -1316,6 +1320,9 @@ namespace PokerCheat
 
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 
+				if (handInProgress && isActive && !isMe && (card0Rank < 2 || card1Rank < 2))
+					anyOpponentUnreadable = true;
+
 				if (!handInProgress || card0Rank < 2 || card1Rank < 2)
 				{
 #ifdef _DEBUG
@@ -1359,6 +1366,10 @@ namespace PokerCheat
 								worstResult = -1;
 							else if (cmp == 0 && worstResult > 0)
 								worstResult = 0;
+						}
+						else if (category < 0)
+						{
+							anyOpponentUnreadable = true;
 						}
 					}
 				}
@@ -1497,7 +1508,7 @@ namespace PokerCheat
 			// are still always computed regardless (needed so the
 			// per-seat comparison flows through correctly either way).
 			if (handInProgress && Config::Get().ShowWinPrediction)
-				DrawWinPredictionStatus(haveMyHand, anyOpponent, worstResult);
+				DrawWinPredictionStatus(haveMyHand && !anyOpponentUnreadable, anyOpponent, worstResult);
 		}
 	}
 

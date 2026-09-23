@@ -2,6 +2,8 @@
 #include "PatternScan.h"
 #include "Log.h"
 
+#include <windows.h>
+
 #include <fstream>
 #include <sstream>
 #include <iomanip>
@@ -23,21 +25,34 @@ namespace GamePointers
 {
 	rage::atArray<rage::scrThread*>* GetScriptThreads()
 	{
-		static rage::atArray<rage::scrThread*>* cached = []() -> rage::atArray<rage::scrThread*>*
+		// Only a successful scan is cached. A miss is retried (at most every
+		// 5 s, logged once) rather than cached forever, so a scan that runs
+		// before RDR2.exe has finished unpacking can't leave the mod dead
+		// for the whole session. Script-fiber only (see main.cpp).
+		static rage::atArray<rage::scrThread*>* cached = nullptr;
+		static ULONGLONG nextAttemptMs = 0;
+		static bool loggedMiss = false;
+		if (cached)
+			return cached;
+
+		const ULONGLONG nowMs = GetTickCount64();
+		if (nowMs < nextAttemptMs)
+			return nullptr;
+		nextAttemptMs = nowMs + 5000;
+
+		auto match = PatternScan::FindInMainModule(kScriptThreadsPattern);
+		if (!match)
 		{
-			auto match = PatternScan::FindInMainModule(kScriptThreadsPattern);
-			if (!match)
-			{
-				Log::Write("GamePointers::GetScriptThreads: pattern not found");
-				return nullptr;
-			}
+			if (!loggedMiss)
+				Log::Write("GamePointers::GetScriptThreads: pattern not found -- retrying every 5 s");
+			loggedMiss = true;
+			return nullptr;
+		}
 
-			auto resolved = PatternScan::ResolveRip(*match, kScriptThreadsOperandOffset);
-			Log::Write("GamePointers::GetScriptThreads: pattern matched at {:#x}, resolved to {:#x}",
-				*match, resolved);
-			return reinterpret_cast<rage::atArray<rage::scrThread*>*>(resolved);
-		}();
-
+		auto resolved = PatternScan::ResolveRip(*match, kScriptThreadsOperandOffset);
+		Log::Write("GamePointers::GetScriptThreads: pattern matched at {:#x}, resolved to {:#x}",
+			static_cast<unsigned long long>(*match), static_cast<unsigned long long>(resolved));
+		cached = reinterpret_cast<rage::atArray<rage::scrThread*>*>(resolved);
 		return cached;
 	}
 
