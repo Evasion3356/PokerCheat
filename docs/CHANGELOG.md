@@ -5,6 +5,29 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.4.0] - 2026-09-23
+
+### Fixed
+- The predicted board and win verdict no longer go wrong while the dealer
+  and blind animations play. During those moments the prediction could
+  include cards that never get dealt, or mix in the previous hand's cards.
+- Fixed a memory-corruption bug when card data wasn't ready yet (e.g.
+  right as a new hand starts).
+- "(You Win)" is no longer shown while an opponent still in the hand
+  can't be read yet.
+- The log is no longer silently lost when the game folder isn't writable.
+- If the game folder can't be written (e.g. a `C:\Program Files` install,
+  or a read-only/locked log file), the log now goes to
+  `%LOCALAPPDATA%\RDR2ASIMods\PokerCheat.log` instead, and its first line
+  names the path that couldn't be used.
+- Loads reliably even when an ASI loader injects the mod before RDR2 has
+  finished unpacking itself. Startup work moved out of the DLL's load
+  callback, and a failed memory scan is retried instead of leaving the mod
+  inactive for the whole session.
+
+### Changed
+- The Release HUD no longer allocates memory every frame.
+
 ## [1.3.0] - 2026-09-13
 
 ### Added
