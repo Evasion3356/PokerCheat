@@ -10,7 +10,7 @@ namespace
 {
 	constexpr int kLanguageCount = static_cast<int>(Localization::Language::Count);
 
-	// Maps a seat's personality index (kPersonalityIndexBase[seat], 0-14)
+	// Maps a seat's personality index (PersonalityLocal(seat), 0-14)
 	// to a human-readable style label. Traced from poker_sp.ysc.c's
 	// func_584 -- 15 func_1191(table, index, p1, p2, styleCode) calls
 	// (lines 25441-25455): styleCode is 0 for indices 0-8 (all of them

@@ -3131,3 +3131,41 @@ verification method as Session 19.
   real table, but if that ever changes (or a named story character uses
   one, the open question carried since Session 14/18), they'd need the
   same treatment.
+
+## Session 23 -- ScriptLocal migration; the personality index was one seat off
+
+Ported BlackjackCheat's `ScriptLocal` (itself adapted from HorseMenu's
+`game/rdr/ScriptLocal.hpp`) into `src/ScriptLocal.h` and rewrote every
+script-local read in `PokerCheat.cpp` as a chain in the decompile's own
+terms: `.f_N` -> `At(N)`, `x[i /*S*/]` -> `At(i, S)` (skips the array's
+size word itself). The flat slot constants (`kTableSlot`, `kBoardSlotB`,
+`kSeatsDataBase`, `kDeckSlot` + `kDeckCardsBaseOffset`,
+`kCommunityCardObjectsBase`, ...) and `ReadInt()` are gone. A block of
+`static_assert`s pins each chain to the slot the old constants read
+(Table A 415 / B 1404, board card 0 1420, hole card 0 1452, deck card 0
+2011, cursor 2115, scene props 4007, ...), so the port can't have moved a
+live-confirmed read. `kDeckCardsBaseOffset = 1` (Session 9's empirical
+"there's a 1-word field before the cards") turns out to be exactly the
+deck array's size word: `var uLocal_2010 = 52;`.
+
+### Bug found: `f_2655.f_90[seat]` has a size word
+
+Session 18 read the personality index at `2873 + seat`, on the belief
+that `f_90` was a plain array with no size word ("func_185 indexes it
+directly with the raw seat number"). But indexing with `[i]` is exactly
+how the decompiler writes every sized array, `f_15`/`f_39` included. The
+local declarations settle it: `var uLocal_2873 = 6;`, the same pattern as
+`uLocal_430 = 11` (A's board), `uLocal_454 = 6` (A's seats) and
+`uLocal_4006 = 5` (the scene's card props). So the old read got the size
+word (6, "Tight-Passive") for seat 0 and seat N-1's personality for seat
+N. Nobody noticed because `func_185` only rolls 5-8, so every shifted
+value was still a real label. `PersonalityLocal(seat)` =
+`f_114.f_2655.f_90.At(seat, 1)` reads `2874 + seat`. The only
+`static_assert` that pins a NEW slot is this one.
+
+Verified: all size words cross-checked against the `var uLocal_N = size`
+declarations in `poker_sp.ysc.c`, Debug + Release build (the
+static_asserts compile), PokerHandEvalTests and LogFallbackTests pass.
+Not yet confirmed live: the personality labels now match each seat.
+Check with the F10 "Probe Seat Occupancy" log plus a table where two
+opponents show different labels.

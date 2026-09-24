@@ -89,7 +89,7 @@ namespace Localization
 	std::string_view VerdictLabel(Language lang, int vsResult);
 
 	// Opponent personality/style label -- see PokerCheat.cpp's
-	// kPersonalityIndexBase header comment for what personalityIndex
+	// kPersonalityField header comment for what personalityIndex
 	// (0-14) means and how it's read. Returns "" for any index outside
 	// that range, same as the original PersonalityLabel()'s default
 	// case (suppresses the personality half of the on-screen tag). Uses

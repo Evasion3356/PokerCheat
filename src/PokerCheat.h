@@ -107,7 +107,7 @@ namespace PokerCheat
 	// Diagnostic: tests whether poker_sp's own community-card reveal
 	// (func_471) creates a real 3D object per board slot whose handle we
 	// can read and project to screen ourselves (see PokerCheat.cpp's
-	// kSceneSlot header comment) -- the mechanism this mod uses to draw
+	// kSceneField header comment) -- the mechanism this mod uses to draw
 	// card icons at the community cards' exact real screen position
 	// instead of a guessed/calibrated one. Wired to the F10 menu's
 	// "Probe Community Card Objects" item -- run with at least the flop

@@ -43,6 +43,7 @@
     <ClInclude Include="src\PokerCheat.h" />
     <ClInclude Include="src\PatternScan.h" />
     <ClInclude Include="src\GamePointers.h" />
+    <ClInclude Include="src\ScriptLocal.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\Localization.h" />
     <ClInclude Include="external\RDR-Classes\script\scrThread.hpp" />

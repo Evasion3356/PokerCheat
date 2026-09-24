@@ -68,7 +68,7 @@ namespace Config
 
 		// Opponent personality/style label ("Tight-Aggressive" etc.),
 		// drawn on the same line as the (You Win)/(They Win)/(Tie) tag --
-		// see PokerCheat.cpp's PersonalityLabel()/kPersonalityIndexBase
+		// see PokerCheat.cpp's PersonalityLabel()/kPersonalityField
 		// header comment for where this reads from and docs/JOURNAL.md
 		// Session 14 for how it was traced. Purely informational (no RNG
 		// involved, unlike the abandoned fold-prediction idea in Session

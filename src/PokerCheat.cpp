@@ -36,12 +36,13 @@
 	    indirection -- it's inline data, not a stored pointer).
 	  - Arrays here carry a leading size/count word before the element
 	    data (matches RDR-Classes\script\types.hpp's SCR_ARRAY::Size).
-	  - Table.f_15 (board): header at Table+15 (card-slot array size, 11),
-	    cards at Table+16..+37 (2 words each, {rank,suit}, -1=empty),
-	    reveal count at Table+38 (0/3/4/5).
-	  - Table.f_39 (seats): header at Table+39 (seat count, 6), seat data
-	    at Table+40 + i*56 (56 words/seat). Per seat: hole cards header at
-	    seat_base+7, real card data at seat_base+8 (2 words each).
+	    Every read goes through a ScriptLocal chain (ScriptLocal.h)
+	    written in the decompile's own `.f_N`/`[i]` terms, which skips
+	    those size words itself -- see the layout block below.
+	  - Table.f_15 (board): cards f_15[i] (stride 2, {rank,suit},
+	    -1=empty, 11-slot array), reveal count f_15.f_23 (0/3/4/5).
+	  - Table.f_39[seat] (seats, 6, stride 56). Per seat: hole cards
+	    seat.f_7[i] (stride 2).
 	  - Card = {rank: 2-14 (11=J,12=Q,13=K,14=A), suit: 0-3}. Suit mapping
 	    0=Hearts, 1=Diamonds, 2=Spades, 3=Clubs -- poker_sp's own func_1599
 	    mapping, confirmed via the TEST ICON experiment (see SuitLetter()).
@@ -64,6 +65,7 @@
 #include "PokerHandEval.h"
 #include "Log.h"
 #include "GamePointers.h"
+#include "ScriptLocal.h"
 #include "Config.h"
 #include "Localization.h"
 #include "script.h"
@@ -120,15 +122,21 @@ namespace PokerCheat
 #endif
 
 	// ------------------------------------------------------------------
-	// Confirmed struct layout (see header comment above and docs/JOURNAL.md
-	// for the derivation/confirmation trail).
+	// Script-local layout, as ScriptLocal chains (ScriptLocal.h) that
+	// mirror poker_sp.ysc.c's own field syntax: `.f_N` -> At(N),
+	// `x[i /*S*/]` -> At(i, S). Every offset below is the DECOMPILED field
+	// number -- no hand-applied "+1 for the size word" anywhere. See the
+	// header comment above and docs/JOURNAL.md for the derivation/
+	// confirmation trail. The static_asserts after the chain functions pin
+	// every chain to the slot the old flat constants read (all live-
+	// confirmed), so the conversion can't have moved a read -- except the
+	// personality index, which the old flat math read one word early (see
+	// kPersonalityField).
 	// ------------------------------------------------------------------
-	constexpr std::uint32_t kLocalStructIndex = 14;    // uLocal_14
-	constexpr std::uint32_t kFieldOffsetF114 = 114;    // uLocal_14.f_114
-	constexpr std::uint32_t kFieldOffsetTableA = 287;  // .f_287 -- the UI's copy of the table (see below)
-	constexpr std::uint32_t kFieldOffsetTableB = 1276; // .f_1276 -- the authoritative game engine (see below)
-	constexpr std::uint32_t kTableSlot = kLocalStructIndex + kFieldOffsetF114 + kFieldOffsetTableA;
-	constexpr std::uint32_t kTableSlotB = kLocalStructIndex + kFieldOffsetF114 + kFieldOffsetTableB;
+	constexpr std::uint32_t kRootLocalIndex = 14;      // uLocal_14
+	constexpr std::uint32_t kF114Field = 114;          // uLocal_14.f_114
+	constexpr std::uint32_t kTableAField = 287;        // f_114.f_287 -- the UI's copy of the table (see below)
+	constexpr std::uint32_t kTableBField = 1276;       // f_114.f_1276 -- the authoritative game engine (see below)
 
 	// How Candidate A and Candidate B relate -- traced in poker_sp.ysc.c:
 	//
@@ -169,9 +177,8 @@ namespace PokerCheat
 	// occupancy (the Scaleform seat-panel layout, see
 	// ComputeDenseRowForSeat()) and the visible reveal count (which board
 	// icons are drawn solid vs. ghosted).
-	constexpr std::uint32_t kBoardRevealCountOffset = 23; // f_15.f_23 -- how many board slots are filled (func_1540)
 
-	constexpr std::uint32_t kF114SeatIndexSlot = kLocalStructIndex + kFieldOffsetF114 + 9; // uLocal_14.f_114.f_9 (local player's seat)
+	constexpr std::uint32_t kMySeatField = 9; // uLocal_14.f_114.f_9 (local player's seat)
 
 	// uLocal_14.f_114.f_2010 -- poker_sp's own round-phase state machine,
 	// set exclusively through func_213 (which also stamps f_2011, a
@@ -190,23 +197,24 @@ namespace PokerCheat
 	// in. Non-zero (1 upward) covers the actual deal/betting/showdown
 	// steps. Not independently confirmed against a live memory read yet
 	// (see docs/JOURNAL.md if this needs re-deriving).
-	constexpr std::uint32_t kF114HandStateSlot = kLocalStructIndex + kFieldOffsetF114 + 2010;
+	constexpr std::uint32_t kHandStateField = 2010;
 
 	// uLocal_14.f_1.f_42 -- user-suggested alternate candidate for the
 	// round-phase state (f_1 is the same generic framework struct
-	// kFrameworkHashSlot already reads f_1.f_39 from, base offset
-	// kLocalStructIndex+1 -- see that constant). f_42 doesn't turn up
+	// kFrameworkHashField already reads f_1.f_39 from -- see that
+	// constant). f_42 doesn't turn up
 	// directly in poker_sp.ysc.c itself (searched; no `.f_42`/`->f_42`
 	// hits), which fits it living in the shared act_gen_poker.ysc.c
 	// framework layer instead, same as f_39 -- not yet traced there.
-	// Logged alongside kF114HandStateSlot in both the on-screen debug
+	// Logged alongside kHandStateField in both the on-screen debug
 	// line and ProbeTableStruct so the two candidates can be directly
 	// compared against a real between-hands window rather than swapped
 	// in blind a third time.
-	constexpr std::uint32_t kF1StateSlot = kLocalStructIndex + 1 + 42;
+	constexpr std::uint32_t kF1Field = 1;              // uLocal_14.f_1
+	constexpr std::uint32_t kF1StateField = 42;        // f_1.f_42
 
 	// uLocal_14.f_114.f_2011 -- the SUB-STEP field func_213 always sets
-	// alongside f_2010 (same call, same function -- see kF114HandStateSlot's
+	// alongside f_2010 (same call, same function -- see kHandStateField's
 	// header comment), but which this file had the address for and never
 	// actually read. User traced a real, active callback (func_286,
 	// registered via func_287(uParam0, 1, &func_286) inside func_101,
@@ -219,25 +227,27 @@ namespace PokerCheat
 	// clears. A genuinely active sub-step machine, unlike the other two
 	// candidates (both confirmed dead ends -- constant for the whole
 	// session). Logged alongside them for direct comparison.
-	constexpr std::uint32_t kF114SubStepSlot = kLocalStructIndex + kFieldOffsetF114 + 2011;
+	constexpr std::uint32_t kSubStepField = 2011;
 
-	// Raw read of uLocal_14 itself (slot kLocalStructIndex, no nested
-	// field offset at all) -- whatever the very first word of the whole
-	// local struct holds. Not tied to any specific traced meaning; added
-	// purely as a cheap, broad diagnostic alongside the real candidates.
-	constexpr std::uint32_t kLocalRawSlot = kLocalStructIndex;
-
-	constexpr std::uint32_t kBoardHeaderOffset = 15;              // Table.f_15 header (board array size, confirmed = 11)
-	constexpr std::uint32_t kBoardSlot = kTableSlot + kBoardHeaderOffset;   // UI copy (A) -- visible reveal count only
-	constexpr std::uint32_t kBoardSlotB = kTableSlotB + kBoardHeaderOffset; // engine (B) -- real dealt cards
-
-	constexpr std::uint32_t kSeatsHeaderOffset = 39;               // Table.f_39 header (seat count, confirmed = 6)
-	constexpr std::uint32_t kSeatsDataBase = kTableSlot + kSeatsHeaderOffset + 1; // Table+40, past the header word -- UI copy (A), seat occupancy/panel layout
-	constexpr std::uint32_t kSeatsDataBaseB = kTableSlotB + kSeatsHeaderOffset + 1; // same layout on the engine (B) -- hole cards and fold state
+	// Table fields (shared by A and B -- A is a copy of B's head).
+	constexpr std::uint32_t kBoardField = 15;             // Table.f_15 -- board struct: cards[i /*2*/] (size word confirmed = 11, `uLocal_430`/`uLocal_1419 = 11`), then f_23
+	constexpr std::uint32_t kBoardCardsField = 0;         // board[i /*2*/]
+	constexpr std::uint32_t kBoardRevealCountField = 23;  // f_15.f_23 -- how many board slots are filled (func_1540)
+	constexpr std::uint32_t kSeatsField = 39;             // Table.f_39[seat /*56*/] (size word confirmed = 6, `uLocal_454`/`uLocal_1443 = 6`)
 	constexpr std::uint32_t kSeatStride = 56;
-	constexpr std::uint32_t kHoleCardsHeaderOffset = 7;             // seat.f_7 header
-	constexpr std::uint32_t kHoleCardsDataOffset = kHoleCardsHeaderOffset + 1; // seat.f_7 real card data
 	constexpr std::uint32_t kSeatCount = 6;
+
+	// Seat fields (Table.f_39[seat]).
+	constexpr std::uint32_t kSeatOccupiedField = 0;       // seat.f_0 -- func_143's `Table.f_39[seat] != -1`
+	constexpr std::uint32_t kSeatStackField = 2;          // seat.f_2 -- stack
+	constexpr std::uint32_t kSeatBetField = 3;            // seat.f_3 -- current bet
+	constexpr std::uint32_t kSeatStateField = 6;          // seat.f_6 -- -1 empty, 0 active, 1 folded, 2 all-in
+	constexpr std::uint32_t kSeatHoleCardsField = 7;      // seat.f_7[i /*2*/] -- hole cards
+
+	// Card fields (board[i], hole cards[i], deck[i]).
+	constexpr std::uint32_t kCardStride = 2;
+	constexpr std::uint32_t kCardRankField = 0;
+	constexpr std::uint32_t kCardSuitField = 1;
 
 	// uLocal_14.f_114.f_2655.f_90[seat] -- each seat's AI personality
 	// index (0-14, into a fixed 15-entry style table func_584 builds once
@@ -245,14 +255,19 @@ namespace PokerCheat
 	// that actually assigns it, func_185 at poker_sp.ysc.c line 5883:
 	// `func_185(&(uLocal_14.f_114.f_2655), i)` -- no parameter-identity
 	// tracing needed here, uLocal_14 appears in the call verbatim. f_90
-	// is a plain 0-based array (no leading size/count header word, unlike
-	// Table.f_15/f_39) -- confirmed by func_185's own body indexing it
-	// directly with the raw seat number. See docs/JOURNAL.md Session 14
-	// (func_1628, the real decision engine this index feeds) and the
-	// kPersonalityLabels header comment in Localization.cpp for the
-	// index->label mapping. Purely a fixed-per-seat read, no RNG/prediction involved
-	// (unlike the abandoned fold-prediction feature, Session 17).
-	constexpr std::uint32_t kPersonalityIndexBase = kLocalStructIndex + kFieldOffsetF114 + 2655 + 90;
+	// is an ordinary script array WITH a leading size word, like
+	// Table.f_15/f_39: the decompile writes it `f_90[i]` (brackets), and
+	// its size word is declared at the old flat slot itself --
+	// `var uLocal_2873 = 6;` (14 + 114 + 2655 + 90 = 2873). The old flat
+	// read (2873 + seat, on the belief that f_90 had no size word) got 6
+	// for seat 0 and seat N-1's personality for seat N. At(seat, 1) reads
+	// 2874 + seat. See docs/JOURNAL.md Session 14 (func_1628, the real
+	// decision engine this index feeds) and the kPersonalityLabels header
+	// comment in Localization.cpp for the index->label mapping. Purely a
+	// fixed-per-seat read, no RNG/prediction involved (unlike the
+	// abandoned fold-prediction feature, Session 17).
+	constexpr std::uint32_t kAiField = 2655;              // f_114.f_2655
+	constexpr std::uint32_t kPersonalityField = 90;       // f_2655.f_90[seat]
 
 	// .f_606 -- the deck. Confirmed via func_589 (builds a plain,
 	// UN-prefixed 52-card array directly at the deck's own base -- 4
@@ -273,29 +288,28 @@ namespace PokerCheat
 	// line 7065, func_590(uParam0) called right after within func_285
 	// itself with the same uParam0), operate on Candidate B, not A. A is
 	// the UI's delayed copy of B's head and doesn't contain the deck at
-	// all -- see the A/B comment next to kTableSlotB.
-	constexpr std::uint32_t kDeckOffset = 606;                 // .f_606
-	constexpr std::uint32_t kDeckSlot = kTableSlotB + kDeckOffset;
-	constexpr std::uint32_t kDeckCursorOffset = 105;           // f_606.f_105 -- index of the next undrawn card
-	constexpr std::uint32_t kDeckCountOffset = 106;            // f_606.f_106 -- total cards (52)
-	// The 52 card elements do NOT start at kDeckSlot+0 -- there's a
-	// 1-word field before them (kDeckSlot+0 itself reads 52, i.e. count,
-	// mirrored/leftover from whatever field precedes the array in the
-	// Table struct). Nailed down empirically: raw-dumped kDeckSlot+1..+16
-	// against 4 already-dealt, screen-confirmed hole cards (2 consecutive
-	// draws per seat) and got an exact, duplicate-free match starting at
-	// +1 (card 0's rank), not +0 -- see docs/JOURNAL.md. Every prior read
-	// of card element k (rank at kDeckSlot+k*2) was off by one word,
-	// which is why predicted cards were reading as garbage/invalid ranks
-	// and suits instead of just "wrong but valid-looking" ones.
-	constexpr std::uint32_t kDeckCardsBaseOffset = 1;
+	// all -- see the A/B comment next to kTableBField.
+	constexpr std::uint32_t kDeckField = 606;                  // Table.f_606
+	constexpr std::uint32_t kDeckCardsField = 0;               // deck[i /*2*/] -- func_1543's `uParam0->[f_105 /*2*/]`
+	constexpr std::uint32_t kDeckCursorField = 105;            // f_606.f_105 -- index of the next undrawn card
+	constexpr std::uint32_t kDeckCountField = 106;             // f_606.f_106 -- total cards (52)
+	// The 52 card elements do NOT start at deck+0: deck+0 is the card
+	// array's size word (reads 52; declared `var uLocal_2010 = 52;`),
+	// which At(i, kCardStride) skips. Nailed down empirically before the
+	// ScriptLocal conversion: raw-dumped deck+1..+16 against 4
+	// already-dealt, screen-confirmed hole cards (2 consecutive draws per
+	// seat) and got an exact, duplicate-free match starting at +1 (card
+	// 0's rank), not +0 -- see docs/JOURNAL.md. Every earlier read of card
+	// element k (rank at deck+k*2) was off by one word, which is why
+	// predicted cards were reading as garbage/invalid ranks and suits
+	// instead of just "wrong but valid-looking" ones.
 
 	// LaunchArgs (uScriptParam_0) and the framework-hash landmark used to
 	// independently validate the uLocal_14-relative addressing chain --
 	// kept here for ProbeTableStruct(), not used by the overlay itself.
-	constexpr std::uint32_t kLaunchArgsSlot = 4810;
+	constexpr std::uint32_t kLaunchArgsIndex = 4810;           // uScriptParam_0 (declared right after the last uLocal)
 	constexpr std::uint32_t kLaunchArgsStakesTierField = 12;
-	constexpr std::uint32_t kFrameworkHashSlot = 14 + 1 + 39; // uLocal_14.f_1.f_39
+	constexpr std::uint32_t kFrameworkHashField = 39;          // uLocal_14.f_1.f_39
 	constexpr std::int32_t kKnownStakesHashes[] = {-1150372370, 355424894, -471827042, -2033178055};
 
 	// The "scene" struct (uLocal_14.f_3310, a sibling of f_114/Table, NOT
@@ -317,27 +331,57 @@ namespace PokerCheat
 	// no guessed/calibrated coordinates needed. Offset below is a traced
 	// candidate, not yet empirically confirmed (see
 	// ProbeCommunityCardObjects()).
-	constexpr std::uint32_t kSceneSlot = kLocalStructIndex + 3310; // uLocal_14.f_3310
+	constexpr std::uint32_t kSceneField = 3310;                // uLocal_14.f_3310
+	constexpr std::uint32_t kSceneCardPropsField = 671;        // scene.f_671
 	// f_11 is itself an array with the usual leading size/count header
 	// word (same convention as Table.f_15/f_39, confirmed empirically
-	// this time via ProbeCommunityCardObjects(): offset+0 read exactly
-	// 5 -- the board's own slot count, not a card -- and the real object
-	// handles started one word later. Element 0's real handle is at
-	// kCommunityCardObjectsHeader+1, not +0.
-	constexpr std::uint32_t kCommunityCardObjectsHeader = kSceneSlot + 671 + 11; // scene.f_671.f_11 header (confirmed = 5)
-	constexpr std::uint32_t kCommunityCardObjectsBase = kCommunityCardObjectsHeader + 1; // scene.f_671.f_11[0], real object handle
+	// via ProbeCommunityCardObjects(): the size word read exactly 5 --
+	// the board's own slot count, not a card -- and the real object
+	// handles started one word later; declared `var uLocal_4006 = 5;`).
+	constexpr std::uint32_t kCommunityCardObjectsField = 11;   // scene.f_671.f_11[slot], real object handle
 	constexpr std::uint32_t kCommunityCardObjectCount = 5;
+
+	constexpr ScriptLocal RootLocal(rage::scrThread* thread) { return ScriptLocal(thread, kRootLocalIndex); }
+	constexpr ScriptLocal F114Local(rage::scrThread* thread) { return RootLocal(thread).At(kF114Field); }
+	constexpr ScriptLocal MySeatLocal(rage::scrThread* thread) { return F114Local(thread).At(kMySeatField); }
+	constexpr ScriptLocal HandStateLocal(rage::scrThread* thread) { return F114Local(thread).At(kHandStateField); }
+	constexpr ScriptLocal SubStepLocal(rage::scrThread* thread) { return F114Local(thread).At(kSubStepField); }
+	constexpr ScriptLocal F1StateLocal(rage::scrThread* thread) { return RootLocal(thread).At(kF1Field).At(kF1StateField); }
+	constexpr ScriptLocal FrameworkHashLocal(rage::scrThread* thread) { return RootLocal(thread).At(kF1Field).At(kFrameworkHashField); }
+	constexpr ScriptLocal LaunchArgsLocal(rage::scrThread* thread) { return ScriptLocal(thread, kLaunchArgsIndex); }
+
+	constexpr ScriptLocal TableALocal(rage::scrThread* thread) { return F114Local(thread).At(kTableAField); }
+	constexpr ScriptLocal TableBLocal(rage::scrThread* thread) { return F114Local(thread).At(kTableBField); }
+	constexpr ScriptLocal BoardLocal(const ScriptLocal& table) { return table.At(kBoardField); }
+	constexpr ScriptLocal BoardCardLocal(const ScriptLocal& table, std::uint32_t card) { return BoardLocal(table).At(kBoardCardsField).At(card, kCardStride); }
+	constexpr ScriptLocal SeatLocal(const ScriptLocal& table, std::uint32_t seat) { return table.At(kSeatsField).At(seat, kSeatStride); }
+	constexpr ScriptLocal HoleCardLocal(const ScriptLocal& seat, std::uint32_t card) { return seat.At(kSeatHoleCardsField).At(card, kCardStride); }
+	constexpr ScriptLocal DeckLocal(const ScriptLocal& table) { return table.At(kDeckField); }
+	constexpr ScriptLocal DeckCardLocal(rage::scrThread* thread, std::int32_t card) { return DeckLocal(TableBLocal(thread)).At(kDeckCardsField).At(static_cast<std::uint32_t>(card), kCardStride); }
+	constexpr ScriptLocal PersonalityLocal(rage::scrThread* thread, std::uint32_t seat) { return F114Local(thread).At(kAiField).At(kPersonalityField).At(seat, 1); }
+	constexpr ScriptLocal CommunityCardObjectLocal(rage::scrThread* thread, std::uint32_t slot) { return RootLocal(thread).At(kSceneField).At(kSceneCardPropsField).At(kCommunityCardObjectsField).At(slot, 1); }
+
+	// Pinned to the absolute slots the old flat constants read, every one
+	// live-confirmed (ProbeTableStruct/ProbeSeatOccupancy/
+	// ProbeCommunityCardObjects logs and the on-screen cards; see
+	// docs/JOURNAL.md).
+	static_assert(TableALocal(nullptr).Index() == 415 && TableBLocal(nullptr).Index() == 1404);
+	static_assert(MySeatLocal(nullptr).Index() == 137 && HandStateLocal(nullptr).Index() == 2138 && SubStepLocal(nullptr).Index() == 2139);
+	static_assert(F1StateLocal(nullptr).Index() == 57 && FrameworkHashLocal(nullptr).Index() == 54);
+	static_assert(BoardLocal(TableALocal(nullptr)).Index() == 430 && BoardLocal(TableBLocal(nullptr)).Index() == 1419);                  // board size word (`= 11`)
+	static_assert(BoardCardLocal(TableBLocal(nullptr), 0).Index() == 1420 && BoardCardLocal(TableBLocal(nullptr), 4).At(kCardSuitField).Index() == 1429);
+	static_assert(BoardLocal(TableBLocal(nullptr)).At(kBoardRevealCountField).Index() == 1442);
+	static_assert(SeatLocal(TableALocal(nullptr), 0).Index() == 455 && SeatLocal(TableBLocal(nullptr), 5).Index() == 1444 + 5 * 56);  // old kSeatsDataBase(B) + seat*56
+	static_assert(HoleCardLocal(SeatLocal(TableBLocal(nullptr), 0), 0).Index() == 1452 && HoleCardLocal(SeatLocal(TableBLocal(nullptr), 0), 1).Index() == 1454);
+	static_assert(DeckLocal(TableBLocal(nullptr)).Index() == 2010 && DeckCardLocal(nullptr, 0).Index() == 2011);                        // deck size word (`= 52`), card 0
+	static_assert(DeckLocal(TableBLocal(nullptr)).At(kDeckCursorField).Index() == 2115 && DeckLocal(TableBLocal(nullptr)).At(kDeckCountField).Index() == 2116);
+	static_assert(CommunityCardObjectLocal(nullptr, 0).Index() == 4007);                                                              // old kCommunityCardObjectsBase
+	// Deliberately NOT the old slot (2873 + seat, which was f_90's size
+	// word for seat 0) -- see kPersonalityField.
+	static_assert(PersonalityLocal(nullptr, 0).Index() == 2874);
 
 	namespace
 	{
-		std::int32_t ReadInt(rage::scrThread* thread, std::uint32_t slot)
-		{
-			void* raw = GamePointers::ReadScriptLocal(thread, slot);
-			// alignas(8) int -- the real value lives in the low 4 bytes of
-			// the 8-byte slot, so truncating a pointer-sized read is correct.
-			return static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(raw));
-		}
-
 
 		const char* RankName(std::int32_t rank)
 		{
@@ -497,7 +541,7 @@ namespace PokerCheat
 
 		// Draws all 5 eventual community card icons at the calibrated
 		// strip position above -- real revealed cards at full alpha,
-		// not-yet-revealed predicted cards (deterministic, see kDeckSlot's
+		// not-yet-revealed predicted cards (deterministic, see kDeckField's
 		// header comment) ghosted at reduced alpha, same real/predicted
 		// split as the text "Board:" line. Takes the predicted-final-board
 		// ranks/suits DrawOverlay() reads once up front (see
@@ -810,7 +854,7 @@ namespace PokerCheat
 		// baked into the game's own .gfx movie layout and isn't exposed to
 		// script at all, unlike the 3D community-card props on the table
 		// (which DO have a readable world position, see
-		// kCommunityCardObjectsBase -- confirmed working, just not what's
+		// kCommunityCardObjectsField -- confirmed working, just not what's
 		// wanted here). No native gives us this coordinate, so it has to
 		// be read off the real screen by eye. This draws a normalized
 		// (0-1) coordinate grid -- thin lines every 0.05, labeled every
@@ -961,7 +1005,7 @@ namespace PokerCheat
 		// Reads the predicted FINAL board: the cards the engine has REALLY
 		// dealt so far (the first engineRevealCount slots of B's Table.f_15)
 		// followed by PREDICTED future cards read straight off the deck at
-		// the current cursor (see kDeckOffset's header comment -- the deck
+		// the current cursor (see kDeckField's header comment -- the deck
 		// is fully shuffled and fixed from hand start, so this isn't a
 		// guess). This is what lets every hand be evaluated against the
 		// eventual board from the very first frame of preflop.
@@ -970,7 +1014,7 @@ namespace PokerCheat
 		// from B: B deals a street by drawing from the deck and appending to
 		// its own board in the same call, so they always agree. The UI copy
 		// (A) can lag several frames behind B (see the A/B comment next to
-		// kTableSlotB) -- pairing A's reveal count with B's cursor made the
+		// kTableBField) -- pairing A's reveal count with B's cursor made the
 		// prediction skip the just-dealt cards and pull in cards that are
 		// never dealt, for as long as the dealer's animation held the UI
 		// back.
@@ -983,20 +1027,23 @@ namespace PokerCheat
 		int ReadPredictedBoard(rage::scrThread* thread, std::int32_t engineRevealCount, std::int32_t deckCursor, std::int32_t deckCount,
 			std::int32_t (&outRanks)[kBoardCardCount], std::int32_t (&outSuits)[kBoardCardCount])
 		{
+			const ScriptLocal tableB = TableBLocal(thread);
 			int filled = 0;
 			std::int32_t deckIndex = deckCursor;
 			for (std::int32_t i = 0; i < kBoardCardCount; i++)
 			{
 				if (i < engineRevealCount)
 				{
-					outRanks[i] = ReadInt(thread, kBoardSlotB + 1 + i * 2);
-					outSuits[i] = ReadInt(thread, kBoardSlotB + 1 + i * 2 + 1);
+					const ScriptLocal card = BoardCardLocal(tableB, static_cast<std::uint32_t>(i));
+					outRanks[i] = card.At(kCardRankField).AsInt32();
+					outSuits[i] = card.At(kCardSuitField).AsInt32();
 					filled++;
 				}
 				else if (deckIndex >= 0 && deckIndex < deckCount)
 				{
-					outRanks[i] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIndex) * 2);
-					outSuits[i] = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(deckIndex) * 2 + 1);
+					const ScriptLocal card = DeckCardLocal(thread, deckIndex);
+					outRanks[i] = card.At(kCardRankField).AsInt32();
+					outSuits[i] = card.At(kCardSuitField).AsInt32();
 					deckIndex++;
 					filled++;
 				}
@@ -1036,8 +1083,7 @@ namespace PokerCheat
 			for (int rawOffset = 1; rawOffset < static_cast<int>(kSeatCount); rawOffset++)
 			{
 				int otherSeat = (mySeat - rawOffset + static_cast<int>(kSeatCount)) % static_cast<int>(kSeatCount);
-				std::uint32_t otherSeatBase = kSeatsDataBase + static_cast<std::uint32_t>(otherSeat) * kSeatStride;
-				std::int32_t otherOccupiedMarker = ReadInt(thread, otherSeatBase + 0);
+				std::int32_t otherOccupiedMarker = SeatLocal(TableALocal(thread), static_cast<std::uint32_t>(otherSeat)).At(kSeatOccupiedField).AsInt32();
 				if (otherOccupiedMarker != -1)
 				{
 					outDenseRow[otherSeat] = nextRow;
@@ -1052,17 +1098,19 @@ namespace PokerCheat
 			if (!thread)
 				return;
 
-			if (!GamePointers::IsScriptLocalInRange(thread, kBoardSlot))
+			const ScriptLocal tableA = TableALocal(thread);
+			const ScriptLocal tableB = TableBLocal(thread);
+			if (!GamePointers::IsScriptLocalInRange(thread, BoardLocal(tableA).Index()))
 				return;
 
-			std::int32_t mySeat = ReadInt(thread, kF114SeatIndexSlot);
+			std::int32_t mySeat = MySeatLocal(thread).AsInt32();
 
 			// Between-hands suppression via poker_sp's internal state
 			// fields was abandoned in Session 11 -- four candidates tried,
 			// none held up live -- and reinstated in Session 13 via a
 			// hole-card-validity heuristic instead (see git history for
 			// that version). That heuristic is retired now that
-			// kF114HandStateSlot's own value range is confirmed directly
+			// kHandStateField's own value range is confirmed directly
 			// from poker_sp.ysc.c's state-machine setter (func_213) and
 			// cross-checked against live dumps -- see docs/JOURNAL.md,
 			// Session 13. States 0-3 are one-time table-entry/launch
@@ -1083,20 +1131,20 @@ namespace PokerCheat
 			// showing the new hand's prediction the moment state 4 hits
 			// again -- confirmed live, this is the desired behavior, not
 			// a placeholder.
-			std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
+			std::int32_t handState = HandStateLocal(thread).AsInt32();
 			bool handInProgress = (handState >= 4 && handState <= 7);
 
 			// Two reveal counts, on purpose (see the A/B comment next to
-			// kTableSlotB): revealCount is what the game is currently
+			// kTableBField): revealCount is what the game is currently
 			// SHOWING (A) and only decides which icons are drawn solid vs.
 			// ghosted; engineRevealCount is what has really been dealt (B)
 			// and is what the prediction is built from, together with B's
 			// deck cursor. They differ only while the UI is holding a
 			// "street dealt" event back for the dealer's animation.
-			std::int32_t revealCount = ReadInt(thread, kBoardSlot + kBoardRevealCountOffset);
-			std::int32_t engineRevealCount = ReadInt(thread, kBoardSlotB + kBoardRevealCountOffset);
-			std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
-			std::int32_t deckCount = ReadInt(thread, kDeckSlot + kDeckCountOffset);
+			std::int32_t revealCount = BoardLocal(tableA).At(kBoardRevealCountField).AsInt32();
+			std::int32_t engineRevealCount = BoardLocal(tableB).At(kBoardRevealCountField).AsInt32();
+			std::int32_t deckCursor = DeckLocal(tableB).At(kDeckCursorField).AsInt32();
+			std::int32_t deckCount = DeckLocal(tableB).At(kDeckCountField).AsInt32();
 
 #ifdef _DEBUG
 			// Live confirmation of the UI-lags-engine window traced from
@@ -1180,8 +1228,9 @@ namespace PokerCheat
 				std::string predStr;
 				for (int i = 0; i < 5; i++)
 				{
-					std::int32_t realRank = ReadInt(thread, kBoardSlotB + 1 + i * 2);
-					std::int32_t realSuit = ReadInt(thread, kBoardSlotB + 1 + i * 2 + 1);
+					const ScriptLocal realCard = BoardCardLocal(tableB, static_cast<std::uint32_t>(i));
+					std::int32_t realRank = realCard.At(kCardRankField).AsInt32();
+					std::int32_t realSuit = realCard.At(kCardSuitField).AsInt32();
 					realStr += RankName(realRank);
 					realStr += SuitLetter(realSuit);
 					realStr += ' ';
@@ -1241,13 +1290,12 @@ namespace PokerCheat
 			if (handInProgress && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
 			{
 				// Hole cards from the engine (B), same source as the board --
-				// see the A/B comment next to kTableSlotB.
-				std::uint32_t myBase = kSeatsDataBaseB + static_cast<std::uint32_t>(mySeat) * kSeatStride;
-				std::uint32_t myCardsBase = myBase + kHoleCardsDataOffset;
-				std::int32_t myCard0Rank = ReadInt(thread, myCardsBase + 0);
-				std::int32_t myCard0Suit = ReadInt(thread, myCardsBase + 1);
-				std::int32_t myCard1Rank = ReadInt(thread, myCardsBase + 2);
-				std::int32_t myCard1Suit = ReadInt(thread, myCardsBase + 3);
+				// see the A/B comment next to kTableBField.
+				const ScriptLocal mySeatLocal = SeatLocal(tableB, static_cast<std::uint32_t>(mySeat));
+				std::int32_t myCard0Rank = HoleCardLocal(mySeatLocal, 0).At(kCardRankField).AsInt32();
+				std::int32_t myCard0Suit = HoleCardLocal(mySeatLocal, 0).At(kCardSuitField).AsInt32();
+				std::int32_t myCard1Rank = HoleCardLocal(mySeatLocal, 1).At(kCardRankField).AsInt32();
+				std::int32_t myCard1Suit = HoleCardLocal(mySeatLocal, 1).At(kCardSuitField).AsInt32();
 				if (myCard0Rank >= 2 && myCard1Rank >= 2)
 				{
 					std::int32_t myRanks[7] = { myCard0Rank, myCard1Rank, boardRanks[0], boardRanks[1], boardRanks[2], boardRanks[3], boardRanks[4] };
@@ -1282,13 +1330,13 @@ namespace PokerCheat
 				// uses. Fold state and hole cards from the engine (B), the
 				// same source as the predicted board, so every seat is
 				// evaluated against cards from the same moment -- see the A/B
-				// comment next to kTableSlotB.
-				std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
-				std::uint32_t engineSeatBase = kSeatsDataBaseB + seat * kSeatStride;
+				// comment next to kTableBField.
+				const ScriptLocal uiSeat = SeatLocal(tableA, seat);
+				const ScriptLocal engineSeat = SeatLocal(tableB, seat);
 
 				// func_143's own check (Table.f_39[seat] != -1, word 0 of
 				// the seat struct) -- is anyone seated here at all.
-				std::int32_t occupiedMarker = ReadInt(thread, seatBase + 0);
+				std::int32_t occupiedMarker = uiSeat.At(kSeatOccupiedField).AsInt32();
 				if (occupiedMarker == -1)
 					continue; // empty seat, don't draw a line for it
 
@@ -1297,7 +1345,7 @@ namespace PokerCheat
 				// 1=folded, 2=all-in) -- func_475's call site (line ~9430)
 				// draws a "folded" status icon exactly when f_6==1,
 				// confirming the mapping.
-				std::int32_t state = ReadInt(thread, engineSeatBase + 6);
+				std::int32_t state = engineSeat.At(kSeatStateField).AsInt32();
 				bool isActive = (state == 0 || state == 2); // still eligible to win the pot
 
 #ifdef _DEBUG
@@ -1305,17 +1353,16 @@ namespace PokerCheat
 				// all-in tag -- debug text panel only, not used by any of
 				// the four Release overlay elements.
 				const char* stateLabel = (state == 1) ? " [FOLDED]" : (state == 2) ? " [ALL-IN]" : "";
-				std::int32_t stack = ReadInt(thread, seatBase + 2);
-				std::int32_t bet = ReadInt(thread, seatBase + 3);
+				std::int32_t stack = uiSeat.At(kSeatStackField).AsInt32();
+				std::int32_t bet = uiSeat.At(kSeatBetField).AsInt32();
 #endif
 
-				std::uint32_t cardsBase = engineSeatBase + kHoleCardsDataOffset;
-				std::int32_t card0Rank = ReadInt(thread, cardsBase + 0);
-				std::int32_t card0Suit = ReadInt(thread, cardsBase + 1);
-				std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
-				std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
+				std::int32_t card0Rank = HoleCardLocal(engineSeat, 0).At(kCardRankField).AsInt32();
+				std::int32_t card0Suit = HoleCardLocal(engineSeat, 0).At(kCardSuitField).AsInt32();
+				std::int32_t card1Rank = HoleCardLocal(engineSeat, 1).At(kCardRankField).AsInt32();
+				std::int32_t card1Suit = HoleCardLocal(engineSeat, 1).At(kCardSuitField).AsInt32();
 
-				std::int32_t personalityIndex = ReadInt(thread, kPersonalityIndexBase + seat);
+				std::int32_t personalityIndex = PersonalityLocal(thread, seat).AsInt32();
 				const std::string_view personalityLabel = Localization::PersonalityLabel(personalityIndex);
 
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
@@ -1435,9 +1482,9 @@ namespace PokerCheat
 			// nothing revealed yet, and a separate "Upcoming:" line for
 			// the prediction -- which read correctly but wasn't where
 			// the prediction was expected to show up). Already-dealt
-			// cards are read from the engine's board (kBoardSlotB); anything
+			// cards are read from the engine's board (B's Table.f_15); anything
 			// not dealt yet is the exact future card read straight off
-			// the deck at the current cursor (see kDeckOffset's header
+			// the deck at the current cursor (see kDeckField's header
 			// comment -- deterministic, not a guess). Anything the game
 			// isn't SHOWING yet (index >= the UI copy's revealCount) is
 			// marked with a trailing "*" / drawn ghosted. Gated by ShowCommunityCards -- both the text
@@ -1496,8 +1543,8 @@ namespace PokerCheat
 			// be a real bug, not noise: the deck read was pulling from
 			// Candidate A (uLocal_14.f_114.f_287) when poker_sp's own
 			// func_285/func_590 both use Candidate B (f_1276) for the
-			// live shuffled deck. Fixed (kDeckSlot now built from
-			// kTableSlotB) and confirmed via ProbeTableStruct: Candidate B
+			// live shuffled deck. Fixed (deck reads now go through
+			// Candidate B) and confirmed via ProbeTableStruct: Candidate B
 			// now logs cursor=8, count=52 mid-hand, a sane live deck --
 			// see docs/JOURNAL.md. Verdict wording restored to confident.
 			// Standalone center-screen status -- NOT part of the seat
@@ -1545,11 +1592,12 @@ namespace PokerCheat
 		Log::Write("ProbeTableStruct: thread->m_ArgsPointer = {}, m_ArgsSize = {}",
 			thread->m_ArgsPointer, thread->m_ArgsSize);
 
-		std::int32_t stakesTierArg = ReadInt(thread, kLaunchArgsSlot + kLaunchArgsStakesTierField);
+		const ScriptLocal stakesTierLocal = LaunchArgsLocal(thread).At(kLaunchArgsStakesTierField);
+		std::int32_t stakesTierArg = stakesTierLocal.AsInt32();
 		Log::Write("ProbeTableStruct: LaunchArgs.f_12 (slot {}) = {}",
-			kLaunchArgsSlot + kLaunchArgsStakesTierField, stakesTierArg);
+			stakesTierLocal.Index(), stakesTierArg);
 
-		std::int32_t frameworkHash = ReadInt(thread, kFrameworkHashSlot);
+		std::int32_t frameworkHash = FrameworkHashLocal(thread).AsInt32();
 		bool hashMatch = false;
 		for (std::int32_t known : kKnownStakesHashes)
 		{
@@ -1561,21 +1609,26 @@ namespace PokerCheat
 		}
 
 		Log::Write("ProbeTableStruct: uLocal_14.f_1.f_39 (slot {}) = {} -- {}",
-			kFrameworkHashSlot, frameworkHash,
+			FrameworkHashLocal(thread).Index(), frameworkHash,
 			hashMatch ? "EXACT MATCH to a known stakes hash" : "no match");
 
-		std::int32_t seatIndex = ReadInt(thread, kF114SeatIndexSlot);
+		std::int32_t seatIndex = MySeatLocal(thread).AsInt32();
 		Log::Write("ProbeTableStruct: uLocal_14.f_114.f_9 (your seat) = {}", seatIndex);
 
-		std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
-		std::int32_t f1State = ReadInt(thread, kF1StateSlot);
-		std::int32_t subStep = ReadInt(thread, kF114SubStepSlot);
-		std::int32_t localRaw = ReadInt(thread, kLocalRawSlot);
+		// uLocal_14 (raw) is the root struct's first word itself -- not
+		// tied to any traced meaning, just a cheap, broad diagnostic
+		// alongside the real round-phase candidates.
+		std::int32_t handState = HandStateLocal(thread).AsInt32();
+		std::int32_t f1State = F1StateLocal(thread).AsInt32();
+		std::int32_t subStep = SubStepLocal(thread).AsInt32();
+		std::int32_t localRaw = RootLocal(thread).AsInt32();
 		Log::Write("ProbeTableStruct: round-phase candidates -- uLocal_14.f_114.f_2010 = {}, uLocal_14.f_1.f_42 = {}, uLocal_14.f_114.f_2011 = {}, uLocal_14 (raw) = {}",
 			handState, f1State, subStep, localRaw);
 
-		std::int32_t boardHeader = ReadInt(thread, kBoardSlot);
-		std::int32_t revealCount = ReadInt(thread, kBoardSlot + 23);
+		const ScriptLocal tableA = TableALocal(thread);
+		const ScriptLocal tableB = TableBLocal(thread);
+		std::int32_t boardHeader = BoardLocal(tableA).AsInt32();
+		std::int32_t revealCount = BoardLocal(tableA).At(kBoardRevealCountField).AsInt32();
 		Log::Write("ProbeTableStruct: Table.f_15 (board) header={} (expect 11), reveal count={} (expect 0/3/4/5)",
 			boardHeader, revealCount);
 
@@ -1583,19 +1636,18 @@ namespace PokerCheat
 		// functions (func_285/func_590) and confirmed, via their own
 		// call sites, that BOTH operate on Candidate B (f_1276) -- the
 		// real shuffled gameplay deck lives there, not Candidate A
-		// (f_287) that hole cards/board/seats are read from. kDeckSlot
-		// now points at Candidate B accordingly. Still logging Candidate
+		// (f_287) that the UI copy's board/seats are read from. Deck reads
+		// use Candidate B accordingly. Still logging Candidate
 		// A's deck area too, purely to confirm empirically that it does
 		// NOT look like a valid live deck (expected: stale/unshuffled or
 		// simply not count=52) now that we're not relying on it.
-		std::uint32_t deckSlotA = kTableSlot + kDeckOffset;
-		std::int32_t deckCursorA = ReadInt(thread, deckSlotA + kDeckCursorOffset);
-		std::int32_t deckCountA = ReadInt(thread, deckSlotA + kDeckCountOffset);
+		std::int32_t deckCursorA = DeckLocal(tableA).At(kDeckCursorField).AsInt32();
+		std::int32_t deckCountA = DeckLocal(tableA).At(kDeckCountField).AsInt32();
 		Log::Write("ProbeTableStruct: Candidate A (f_287) deck cursor={}, count={} -- expected NOT to look like a valid live deck now",
 			deckCursorA, deckCountA);
 
-		std::int32_t deckCursor = ReadInt(thread, kDeckSlot + kDeckCursorOffset);
-		std::int32_t deckCount = ReadInt(thread, kDeckSlot + kDeckCountOffset);
+		std::int32_t deckCursor = DeckLocal(tableB).At(kDeckCursorField).AsInt32();
+		std::int32_t deckCount = DeckLocal(tableB).At(kDeckCountField).AsInt32();
 		Log::Write("ProbeTableStruct: Candidate B (f_1276, now used for all deck reads) cursor={}, count={} (expect count=52) -- next 8 undrawn cards:",
 			deckCursor, deckCount);
 		for (std::int32_t i = 0; i < 8; i++)
@@ -1603,27 +1655,26 @@ namespace PokerCheat
 			std::int32_t idx = deckCursor + i;
 			if (idx < 0 || idx >= deckCount)
 				break;
-			std::int32_t rank = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2);
-			std::int32_t suit = ReadInt(thread, kDeckSlot + kDeckCardsBaseOffset + static_cast<std::uint32_t>(idx) * 2 + 1);
+			const ScriptLocal card = DeckCardLocal(thread, idx);
+			std::int32_t rank = card.At(kCardRankField).AsInt32();
+			std::int32_t suit = card.At(kCardSuitField).AsInt32();
 			Log::Write("  deck[{}]: {}{}", idx, RankName(rank), SuitLetter(suit));
 		}
 
-		std::int32_t seatsHeader = ReadInt(thread, kTableSlot + kSeatsHeaderOffset);
+		std::int32_t seatsHeader = tableA.At(kSeatsField).AsInt32();
 		Log::Write("ProbeTableStruct: Table.f_39 (seats) header={} (expect 6)", seatsHeader);
 
 		Log::Write("ProbeTableStruct: hole cards per seat (rank 2-14, suit 0-3 [C/D/H/S], -1 = no card):");
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 		{
-			std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
-			std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
-
-			std::int32_t card0Rank = ReadInt(thread, cardsBase + 0);
-			std::int32_t card0Suit = ReadInt(thread, cardsBase + 1);
-			std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
-			std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
+			const ScriptLocal seatLocal = SeatLocal(tableA, seat);
+			std::int32_t card0Rank = HoleCardLocal(seatLocal, 0).At(kCardRankField).AsInt32();
+			std::int32_t card0Suit = HoleCardLocal(seatLocal, 0).At(kCardSuitField).AsInt32();
+			std::int32_t card1Rank = HoleCardLocal(seatLocal, 1).At(kCardRankField).AsInt32();
+			std::int32_t card1Suit = HoleCardLocal(seatLocal, 1).At(kCardSuitField).AsInt32();
 
 			Log::Write("  seat {} (base slot {}): card0={{rank={},suit={}}} card1={{rank={},suit={}}}{}",
-				seat, seatBase, card0Rank, card0Suit, card1Rank, card1Suit,
+				seat, seatLocal.Index(), card0Rank, card0Suit, card1Rank, card1Suit,
 				(static_cast<std::int32_t>(seat) == seatIndex) ? "  <-- YOUR SEAT" : "");
 		}
 
@@ -1635,17 +1686,18 @@ namespace PokerCheat
 		// one of the 52 slots before func_1195 (shuffle) ever runs, so a
 		// shuffled slot showing an invalid rank/suit means we're reading
 		// the wrong words, not that the deck itself is wrong. Dump a wide
-		// raw window around kDeckSlot as plain integers so the ALREADY
+		// raw window around B's deck (f_606) as plain integers so the ALREADY
 		// dealt hole cards above (independently confirmed correct many
 		// times against the real screen) can be located by eye in this
 		// dump -- since dealt hole cards are literally deck[0..cursor-1],
 		// finding exactly where each known {rank,suit} pair starts here
 		// pins down the deck's true per-card offset with zero guessing.
-		Log::Write("ProbeTableStruct: raw deck window around kDeckSlot, offsets -4..+114 (compare against the hole cards logged above):");
+		Log::Write("ProbeTableStruct: raw deck window around Candidate B's f_606, offsets -4..+114 (compare against the hole cards logged above):");
+		const std::int32_t deckIndex = static_cast<std::int32_t>(DeckLocal(tableB).Index());
 		for (std::int32_t off = -4; off <= 114; off++)
 		{
-			std::int32_t slot = static_cast<std::int32_t>(kDeckSlot) + off;
-			std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(slot));
+			std::int32_t slot = deckIndex + off;
+			std::int32_t value = ScriptLocal(thread, static_cast<std::uint32_t>(slot)).AsInt32();
 			Log::Write("  deckraw[{:+}] (slot {}) = {}", off, slot, value);
 		}
 	}
@@ -1659,7 +1711,7 @@ namespace PokerCheat
 	// thread->m_Stack is the base, m_Context.m_StackSize is the slot
 	// count, 8 bytes/slot -- so end = base + m_StackSize*8. Also logs
 	// uLocal_14's own absolute address within that range (slot
-	// kLocalStructIndex), as a landmark for locating it by eye once
+	// kRootLocalIndex), as a landmark for locating it by eye once
 	// browsing the dumped range live.
 	void DumpLocalStackRange()
 	{
@@ -1673,12 +1725,12 @@ namespace PokerCheat
 		auto base = reinterpret_cast<std::uintptr_t>(thread->m_Stack);
 		std::uint32_t stackSizeSlots = thread->m_Context.m_StackSize;
 		std::uintptr_t end = base + static_cast<std::uintptr_t>(stackSizeSlots) * 8u;
-		std::uintptr_t localBase = base + static_cast<std::uintptr_t>(kLocalStructIndex) * 8u;
+		std::uintptr_t localBase = base + static_cast<std::uintptr_t>(kRootLocalIndex) * 8u;
 
 		Log::Write("DumpLocalStackRange: start={:#x} end={:#x} (size={} slots, {} bytes)",
 			base, end, stackSizeSlots, end - base);
 		Log::Write("DumpLocalStackRange: uLocal_14 (slot {}) starts at {:#x}",
-			kLocalStructIndex, localBase);
+			kRootLocalIndex, localBase);
 	}
 
 	// Built to debug a live report of the seat card icons drawing extra/
@@ -1699,11 +1751,11 @@ namespace PokerCheat
 			return;
 		}
 
-		std::int32_t mySeat = ReadInt(thread, kF114SeatIndexSlot);
-		std::int32_t handState = ReadInt(thread, kF114HandStateSlot);
-		std::int32_t f1State = ReadInt(thread, kF1StateSlot);
-		std::int32_t subStep = ReadInt(thread, kF114SubStepSlot);
-		std::int32_t localRaw = ReadInt(thread, kLocalRawSlot);
+		std::int32_t mySeat = MySeatLocal(thread).AsInt32();
+		std::int32_t handState = HandStateLocal(thread).AsInt32();
+		std::int32_t f1State = F1StateLocal(thread).AsInt32();
+		std::int32_t subStep = SubStepLocal(thread).AsInt32();
+		std::int32_t localRaw = RootLocal(thread).AsInt32();
 		Log::Write("ProbeSeatOccupancy: mySeat={}, f_114.f_2010={}, f_1.f_42={}, f_114.f_2011={}, uLocal_14 (raw)={}", mySeat, handState, f1State, subStep, localRaw);
 
 		int denseRow[kSeatCount];
@@ -1711,17 +1763,16 @@ namespace PokerCheat
 
 		for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 		{
-			std::uint32_t seatBase = kSeatsDataBase + seat * kSeatStride;
-			std::int32_t occupiedMarker = ReadInt(thread, seatBase + 0);
-			std::int32_t state = ReadInt(thread, seatBase + 6);
-			std::int32_t stack = ReadInt(thread, seatBase + 2);
-			std::int32_t bet = ReadInt(thread, seatBase + 3);
+			const ScriptLocal seatLocal = SeatLocal(TableALocal(thread), seat);
+			std::int32_t occupiedMarker = seatLocal.At(kSeatOccupiedField).AsInt32();
+			std::int32_t state = seatLocal.At(kSeatStateField).AsInt32();
+			std::int32_t stack = seatLocal.At(kSeatStackField).AsInt32();
+			std::int32_t bet = seatLocal.At(kSeatBetField).AsInt32();
 
-			std::uint32_t cardsBase = seatBase + kHoleCardsDataOffset;
-			std::int32_t card0Rank = ReadInt(thread, cardsBase + 0);
-			std::int32_t card0Suit = ReadInt(thread, cardsBase + 1);
-			std::int32_t card1Rank = ReadInt(thread, cardsBase + 2);
-			std::int32_t card1Suit = ReadInt(thread, cardsBase + 3);
+			std::int32_t card0Rank = HoleCardLocal(seatLocal, 0).At(kCardRankField).AsInt32();
+			std::int32_t card0Suit = HoleCardLocal(seatLocal, 0).At(kCardSuitField).AsInt32();
+			std::int32_t card1Rank = HoleCardLocal(seatLocal, 1).At(kCardRankField).AsInt32();
+			std::int32_t card1Suit = HoleCardLocal(seatLocal, 1).At(kCardSuitField).AsInt32();
 			bool cardsValid = (card0Rank >= 2 && card1Rank >= 2);
 
 			Log::Write("  seat {}: occupiedMarker={} state={} stack={} bet={} cards={{{},{}}}/{{{},{}}} (valid={}) denseRow={}{}",
@@ -1734,7 +1785,7 @@ namespace PokerCheat
 
 	// Tests the traced hypothesis that poker_sp's own community-card
 	// reveal (func_471) creates a REAL 3D object per board slot and
-	// stores the handle at scene.f_671.f_11[slot] (see kSceneSlot's
+	// stores the handle at scene.f_671.f_11[slot] (see kSceneField's
 	// header comment) -- if this offset is right, reading that handle
 	// and calling ENTITY::GET_ENTITY_COORDS/GRAPHICS::GET_SCREEN_COORD_
 	// FROM_WORLD_COORD on it ourselves gives the exact real screen
@@ -1750,13 +1801,14 @@ namespace PokerCheat
 			return;
 		}
 
-		std::int32_t revealCount = ReadInt(thread, kBoardSlot + 23);
+		std::int32_t revealCount = BoardLocal(TableALocal(thread)).At(kBoardRevealCountField).AsInt32();
+		const std::uint32_t objectsIndex = CommunityCardObjectLocal(thread, 0).Index();
 		Log::Write("ProbeCommunityCardObjects: reveal count={}, testing scene.f_671.f_11[0..4] (candidate absolute slot {}):",
-			revealCount, kCommunityCardObjectsBase);
+			revealCount, objectsIndex);
 
 		for (std::uint32_t j = 0; j < kCommunityCardObjectCount; j++)
 		{
-			std::int32_t handle = ReadInt(thread, kCommunityCardObjectsBase + j);
+			std::int32_t handle = CommunityCardObjectLocal(thread, j).AsInt32();
 			BOOL exists = ENTITY::DOES_ENTITY_EXIST(handle);
 			if (exists)
 			{
@@ -1774,8 +1826,8 @@ namespace PokerCheat
 				{
 					for (std::int32_t off = -4; off <= 9; off++)
 					{
-						std::int32_t slot = static_cast<std::int32_t>(kCommunityCardObjectsBase) + off;
-						std::int32_t value = ReadInt(thread, static_cast<std::uint32_t>(slot));
+						std::int32_t slot = static_cast<std::int32_t>(objectsIndex) + off;
+						std::int32_t value = ScriptLocal(thread, static_cast<std::uint32_t>(slot)).AsInt32();
 						Log::Write("    scenecardraw[{:+}] (slot {}) = {}", off, slot, value);
 					}
 				}

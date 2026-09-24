@@ -5,6 +5,13 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [Unreleased]
+
+### Fixed
+- Opponent personality labels ("Tight-Aggressive" etc.) now belong to
+  the right seat. Each one was showing the previous seat's personality,
+  and the first seat always showed Tight-Passive.
+
 ## [1.4.0] - 2026-09-23
 
 ### Fixed

@@ -61,7 +61,7 @@ namespace GamePointers
 	// The decompiled script's own f_N field names are exactly this
 	// dump's "slot" column minus whatever struct's base slot you already
 	// know (RDR2's script VM flattens nested struct fields to plain
-	// linear offsets, e.g. Table.f_23 IS the slot at kTableSlot+23) -- so
+	// linear offsets, e.g. Table.f_23 IS the slot at Table+23) -- so
 	// a hit in the dump at slot S under a struct known to start at base B
 	// is directly "f_(S-B)" in the decompile, no further translation
 	// needed.
