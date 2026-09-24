@@ -175,4 +175,17 @@ copy /Y "$(TargetDir)$(TargetName).pdb" "%GAMEDIR%\$(TargetName).pdb"</Command>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
+  <!-- Writes bin\$(Configuration)\$(TargetName).ini with this configuration's
+       defaults, for the release package: builds and runs tools\IniGen, which
+       calls the mod's own Config code in an empty folder (see IniGen.cpp).
+       Deliberately not deployed to the game folder. -->
+  <Target Name="GenerateDefaultIni" AfterTargets="Build" Condition="'$(Configuration)'=='Debug' or '$(Configuration)'=='Release'">
+    <PropertyGroup>
+      <IniGenDir>$(MSBuildProjectDirectory)\tmp\$(Configuration)\IniGen\</IniGenDir>
+    </PropertyGroup>
+    <MSBuild Projects="tools\IniGen\IniGen.vcxproj" Properties="Configuration=$(Configuration);Platform=$(Platform)" />
+    <Delete Files="$(IniGenDir)$(TargetName).ini" />
+    <Exec Command="&quot;$(IniGenDir)IniGen.exe&quot;" />
+    <Copy SourceFiles="$(IniGenDir)$(TargetName).ini" DestinationFolder="$(OutDir)" />
+  </Target>
 </Project>
