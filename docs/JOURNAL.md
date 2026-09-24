@@ -3166,6 +3166,16 @@ value was still a real label. `PersonalityLocal(seat)` =
 Verified: all size words cross-checked against the `var uLocal_N = size`
 declarations in `poker_sp.ysc.c`, Debug + Release build (the
 static_asserts compile), PokerHandEvalTests and LogFallbackTests pass.
-Not yet confirmed live: the personality labels now match each seat.
-Check with the F10 "Probe Seat Occupancy" log plus a table where two
-opponents show different labels.
+CONFIRMED LIVE (2026-09-24, `PokerCheat_stackdump_20260924_142610.jsonl`,
+hand in progress, f_2010 = 4, my seat f_9 = 5). Slots 2873..2879 read
+6, 8, 7, 6, 6, 0, 0. Seat occupancy (Table.f_39[i].f_0): AI at 0/1/2,
+empty at 3/4, me at 5. New read (2874 + seat): 8, 7, 6 for the three AI
+seats, 0 for me, 0 for seat 4 (never dealt: hole cards -1). Seat 3 reads
+6, but it still holds stale hole cards (2/2, 14/2), so an AI sat there
+earlier and left; nothing clears f_90[seat] on leave, and the overlay
+skips empty seats anyway. The old read (2873 + seat) would have given the
+never-used seat 4 personality 6 and seat 0 the size word, and labeled
+the AI seats Tight-Passive/Tight-Aggressive/Loose-Aggressive instead of
+the real Tight-Aggressive/Loose-Aggressive/Tight-Passive. Nothing in the
+game's own UI shows a seat's personality, so this rests on the memory
+reads plus the decompile's zero-init/assign-on-AI-seat logic.
