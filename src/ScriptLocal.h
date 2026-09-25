@@ -2,7 +2,7 @@
 	Chainable script-local field/array accessor, adapted from HorseMenu's
 	own `game/rdr/ScriptLocal.hpp`/`ScriptGlobal.hpp`
 	(D:\Backup\Stuff\RDR2 Shit\HorseMenu\src\game\rdr\). Vendored
-	unchanged from ..\BlackjackCheat\src\ScriptLocal.h (Index() is
+	from ..\BlackjackCheat\src\ScriptLocal.h, SetInt32() included (Index() is
 	constexpr, so every chain in PokerCheat.cpp's layout block is pinned
 	to its live-confirmed slot with a static_assert).
 
@@ -63,6 +63,18 @@ public:
 	{
 		void* raw = GamePointers::ReadScriptLocal(m_Thread, m_Index);
 		return static_cast<std::int32_t>(reinterpret_cast<std::intptr_t>(raw));
+	}
+
+	// The project's one memory write (the bet hotkeys, see PokerCheat.cpp's
+	// UpdateBetHotkeys()). Writes the low 4 bytes, where AsInt32() reads.
+	// Returns false if the slot is out of range.
+	bool SetInt32(std::int32_t value) const
+	{
+		void* address = GamePointers::GetScriptLocalAddress(m_Thread, m_Index);
+		if (!address)
+			return false;
+		*static_cast<std::int32_t*>(address) = value;
+		return true;
 	}
 
 	// Same slot, bit-reinterpreted as IEEE-754 (for a `float` local).

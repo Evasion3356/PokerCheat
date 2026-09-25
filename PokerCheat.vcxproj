@@ -11,14 +11,12 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <!-- Debug-only: the F10 test menu (scriptmenu.cpp) and the raw
-         key-state tracker it reads (keyboard.cpp) are dev-tuning
-         surfaces with no caller left anywhere in a Release build (see
-         script.cpp/main.cpp), excluded from Release entirely instead
-         of relying on the linker to discard unreferenced code. -->
-    <ClCompile Include="src\keyboard.cpp">
-      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
-    </ClCompile>
+    <!-- Debug-only: the F10 test menu (scriptmenu.cpp) is a dev-tuning
+         surface with no caller left in a Release build (see script.cpp),
+         excluded from Release entirely instead of relying on the linker
+         to discard unreferenced code. keyboard.cpp is built everywhere:
+         the bet hotkeys read it in Release too. -->
+    <ClCompile Include="src\keyboard.cpp" />
     <ClCompile Include="src\main.cpp" />
     <ClCompile Include="src\script.cpp" />
     <ClCompile Include="src\scriptmenu.cpp">
@@ -44,6 +42,7 @@
     <ClInclude Include="src\PatternScan.h" />
     <ClInclude Include="src\GamePointers.h" />
     <ClInclude Include="src\ScriptLocal.h" />
+    <ClInclude Include="src\ScriptGlobal.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\Localization.h" />
     <ClInclude Include="external\RDR-Classes\script\scrThread.hpp" />
@@ -130,6 +129,7 @@
            compile time otherwise: MSVC defaults to the current code
            page for source/execution charset, not UTF-8. -->
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -164,6 +164,7 @@ copy /Y "$(TargetPath)" "%GAMEDIR%\$(TargetFileName)"</Command>
       <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
       <AdditionalIncludeDirectories>external\spdlog\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <MultiProcessorCompilation>true</MultiProcessorCompilation>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>

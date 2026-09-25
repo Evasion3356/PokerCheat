@@ -22,19 +22,13 @@ BOOL APIENTRY DllMain(HMODULE hInstance, DWORD reason, LPVOID lpReserved)
 		// ScriptMain does both first thing instead (see script.cpp), which
 		// still keeps the cost off the first toggle.
 		scriptRegister(hInstance, ScriptMain);
-#ifdef _DEBUG
-		// Release has no menu to drive with keystrokes at all (see
-		// script.cpp) -- registering this hook there would just mean
-		// every keypress in the game writes into keyboard.cpp's key-state
-		// array for absolutely nothing to ever read. Debug-only.
+		// Both builds: Debug's F10 menu and the bet hotkeys (Right/Left/Tab,
+		// see PokerCheat.cpp's UpdateBetHotkeys()).
 		keyboardHandlerRegister(OnKeyboardMessage);
-#endif
 		break;
 	case DLL_PROCESS_DETACH:
 		scriptUnregister(hInstance);
-#ifdef _DEBUG
 		keyboardHandlerUnregister(OnKeyboardMessage);
-#endif
 		break;
 	}
 	return TRUE;

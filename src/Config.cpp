@@ -106,6 +106,7 @@ namespace
 		g_values.ShowWinPrediction = GetOr(general, "ShowWinPrediction", defaults.ShowWinPrediction);
 		g_values.ShowWouldWinHandAgainst = GetOr(general, "ShowWouldWinHandAgainst", defaults.ShowWouldWinHandAgainst);
 		g_values.ShowOpponentPersonality = GetOr(general, "ShowOpponentPersonality", defaults.ShowOpponentPersonality);
+		g_values.BetHotkeys = GetOr(general, "BetHotkeys", defaults.BetHotkeys);
 		g_values.Language = GetOr(general, "Language", defaults.Language);
 
 #ifdef _DEBUG
@@ -141,6 +142,7 @@ namespace
 		SetBool(general, "ShowWinPrediction", g_values.ShowWinPrediction);
 		SetBool(general, "ShowWouldWinHandAgainst", g_values.ShowWouldWinHandAgainst);
 		SetBool(general, "ShowOpponentPersonality", g_values.ShowOpponentPersonality);
+		SetBool(general, "BetHotkeys", g_values.BetHotkeys);
 		general["Language"] = g_values.Language;
 
 #ifdef _DEBUG

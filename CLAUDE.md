@@ -14,7 +14,12 @@ deterministic future cards sitting at the current deck cursor), and shows
 an on-screen HUD with everyone's hand and a WIN/LOSE/CHOP verdict for the
 player. Hand scoring is fully self-contained (`src/PokerHandEval.h`, unit
 tested -- see Tests below) rather than delegated to the game's own
-hand-rank native. Read `docs/JOURNAL.md` for the full derivation/bugfix
+hand-rank native. The one memory write is the bet hotkeys
+(`UpdateBetHotkeys()`, ported from `../BlackjackCheat`, `BetHotkeys` INI
+key): Right/Left arrow (5 chips) and Tab (max) write the open bet/raise
+UI's amount (`uLocal_14.f_2979.f_281.f_4`) or the buy-in UI's
+(`f_2979.f_298.f_2`) straight to a value inside the game's own clamp --
+traced statically, not yet confirmed live. Read `docs/JOURNAL.md` for the full derivation/bugfix
 history, `docs/PITFALLS.md` for lessons carried over from
 `CollectorOffline`, and `src/PokerCheat.cpp`'s header comment for the
 current struct-layout/hand-eval design.
@@ -167,9 +172,10 @@ the INI you're testing with there is never overwritten.
   `Toggle()`, and `OnTick()` (called every frame, currently a no-op). Its
   header comment in `.cpp` is the concrete reversing/implementation plan --
   read it before starting the poker_sp trace.
-- `src/scriptmenu.h/.cpp`, `src/keyboard.h/.cpp` -- vendored unchanged from
+- `src/scriptmenu.h/.cpp`, `src/keyboard.h/.cpp` -- vendored from
   `CollectorOffline` (itself adapted from the ScriptHookRDR2 SDK's
-  NativeTrainer sample).
+  NativeTrainer sample); keyboard adds `IsKeyWithAlt()` and is built and
+  hooked in Release too, for the bet hotkeys.
 - `src/Log.h` -- minimal timestamped file logger (`PokerCheat.log`),
   backed by spdlog (`external/spdlog`, header-only) instead of a
   hand-rolled `fopen_s`/`vfprintf` pair -- see Coding Conventions above

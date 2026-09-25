@@ -76,6 +76,16 @@ namespace Config
 		// they're sitting there, read directly, not guessed.
 		bool ShowOpponentPersonality = true;
 
+		// Right/Left arrow = bet 5 chips up/down (hold to repeat, like the
+		// game's own Up/Down), Tab = the most the game allows, with a "-/+"
+		// and an All-in/Max Bet prompt (the game's own text) beside the
+		// game's own -- on your turn's bet/raise prompt and on the buy-in
+		// prompt. Writes the amount
+		// directly (the mod's only memory write), always within the game's
+		// own limits -- see PokerCheat.cpp's UpdateBetHotkeys(). false = off
+		// entirely: no prompts, the keys do nothing.
+		bool BetHotkeys = true;
+
 #ifdef _DEBUG
 		// HUD text panel (the seat/board/verdict text block). Debug-only,
 		// same convention as Card2DIconBaseX/SeatCardIconBaseX below --

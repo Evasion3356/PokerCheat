@@ -66,10 +66,14 @@
 #include "Log.h"
 #include "GamePointers.h"
 #include "ScriptLocal.h"
+#include "ScriptGlobal.h"
 #include "Config.h"
 #include "Localization.h"
 #include "script.h"
+#include "keyboard.h"
 
+#include <algorithm>
+#include <cmath>
 #include <sstream>
 #include <iomanip>
 #include <array>
@@ -379,6 +383,76 @@ namespace PokerCheat
 	// Deliberately NOT the old slot (2873 + seat, which was f_90's size
 	// word for seat 0) -- see kPersonalityField.
 	static_assert(PersonalityLocal(nullptr, 0).Index() == 2874);
+
+	// The two amount-entry UIs, both in the prompt/HUD struct
+	// uLocal_14.f_2979. Static trace only:
+	//  - Bet/raise (f_2979.f_281): func_652 opens it (func_1248) on your
+	//    turn only -- it's guarded by func_648, `f_114.f_9 == seat` -- and
+	//    func_653 runs it every frame (func_1252) until f_281.f_2 holds
+	//    the chosen action. f_281.f_4 is the amount in chips, ON TOP of
+	//    what your seat already put in this street (seat.f_4), so 0 is
+	//    check. func_1252 moves it by func_984's steps (one chip per step)
+	//    and clamps it to func_1614's three limits: [0 or the call, the
+	//    minimum raise, the most you can put in] -- anything between the
+	//    call and the minimum raise snaps to one of them by direction.
+	//  - Buy-in (f_2979.f_298): func_389 opens it when you sit down or are
+	//    broke; func_390 runs it. f_298.f_2 is the amount in chips, clamped
+	//    by func_985 to [f_114.f_10.f_12, f_114.f_10.f_13] (the table's
+	//    buy-in limits), each capped at the cash you carry, in chips.
+	// Both hold func_984's hold-to-repeat struct (f_281.f_5 / f_298.f_3),
+	// whose first float is the static initial value 7f
+	// (`uLocal_3279`/`uLocal_3294 = 1088421888`), which pins the slots
+	// below. f_2979.f_157 is cents per chip (func_987: the prompt shows
+	// `chips * f_157`; func_982: cash / f_157 = chips). The bet hotkeys
+	// (UpdateBetHotkeys()) write f_281.f_4 / f_298.f_2 -- the mod's only
+	// memory write -- and copy that repeat curve for Right/Left.
+	constexpr std::uint32_t kPromptHudField = 2979;           // uLocal_14.f_2979
+	constexpr std::uint32_t kChipValueField = 157;            // f_2979.f_157 -- cents per chip
+	constexpr std::uint32_t kBetInputField = 281;             // f_2979.f_281 -- 1 while the bet/raise UI is up
+	constexpr std::uint32_t kBetInputResultField = 2;         // f_281.f_2 -- 0 until an action is chosen
+	constexpr std::uint32_t kBetInputAmountField = 4;         // f_281.f_4 -- chips on top of seat.f_4
+	constexpr std::uint32_t kBetInputRepeatField = 5;         // f_281.f_5 -- func_984's hold-to-repeat struct
+	constexpr std::uint32_t kBuyInInputField = 298;           // f_2979.f_298 -- 1 while the buy-in UI is up
+	constexpr std::uint32_t kBuyInInputResultField = 1;       // f_298.f_1 -- 0 until confirmed
+	constexpr std::uint32_t kBuyInInputAmountField = 2;       // f_298.f_2 -- chips
+	constexpr std::uint32_t kBuyInInputRepeatField = 3;       // f_298.f_3
+	constexpr std::uint32_t kBetInputAlterPromptField = 16;   // f_281.f_16 -- the game's "Amount" prompt, as a prompt-pool slot (func_1252)
+	constexpr std::uint32_t kBuyInInputAlterPromptField = 13; // f_298.f_13 -- same, buy-in (func_390; only when min != max)
+
+	// The prompt pool every func_450 prompt lives in: Global_1945188[slot
+	// /*18*/], slots 1-48 (func_450 hands out the first free one > 0, 0 =
+	// none; func_119 rejects > 48). .f_3 is the real Prompt handle -- what
+	// func_988/func_451 pass to _UI_PROMPT_SET_TEXT/_SET_ATTRIBUTE.
+	constexpr std::uint32_t kPromptPoolGlobal = 1945188;
+	constexpr std::uint32_t kPromptPoolStride = 18;
+	constexpr std::uint32_t kPromptPoolHandleField = 3;
+	constexpr std::int32_t kPromptPoolLastSlot = 48;
+
+	// func_1614's inputs: the table (Table A, f_114.f_287 -- func_653
+	// passes that copy), your seat, and the table settings f_114.f_10.
+	constexpr std::uint32_t kTableCallField = 7;              // Table.f_7 -- the street's highest bet (0 = nobody bet yet)
+	constexpr std::uint32_t kTableRaiseField = 8;             // Table.f_8 -- the last raise's size
+	constexpr std::uint32_t kTableOpenBetField = 10;          // Table.f_10 -- the minimum bet when nobody bet yet
+	constexpr std::uint32_t kSeatHandTotalField = 3;          // seat.f_3 -- put in this hand (vs. the table cap)
+	constexpr std::uint32_t kSeatStreetBetField = 4;          // seat.f_4 -- put in this street
+	constexpr std::uint32_t kSeatCanRaiseField = 5;           // seat.f_5 -- 0 = may only call, not raise
+	constexpr std::uint32_t kSettingsField = 10;              // f_114.f_10
+	constexpr std::uint32_t kSettingsLimitTypeField = 3;      // f_10.f_3 -- kCappedLimitType = a capped table
+	constexpr std::uint32_t kSettingsBuyInMinField = 12;      // f_10.f_12
+	constexpr std::uint32_t kSettingsBuyInMaxField = 13;      // f_10.f_13
+	constexpr std::uint32_t kSettingsCapField = 16;           // f_10.f_16 -- most a seat can put in per hand, if > 0
+	constexpr std::int32_t kCappedLimitType = 1717653435;
+
+	constexpr ScriptLocal PromptHudLocal(rage::scrThread* thread) { return RootLocal(thread).At(kPromptHudField); }
+	constexpr ScriptLocal BetInputLocal(rage::scrThread* thread) { return PromptHudLocal(thread).At(kBetInputField); }
+	constexpr ScriptLocal BuyInInputLocal(rage::scrThread* thread) { return PromptHudLocal(thread).At(kBuyInInputField); }
+	constexpr ScriptLocal SettingsLocal(rage::scrThread* thread) { return F114Local(thread).At(kSettingsField); }
+
+	static_assert(BetInputLocal(nullptr).At(kBetInputRepeatField).Index() == 3279);     // `uLocal_3279 = 1088421888` (7f), static trace
+	static_assert(BuyInInputLocal(nullptr).At(kBuyInInputRepeatField).Index() == 3294); // `uLocal_3294 = 1088421888` (7f), static trace
+
+	constexpr ScriptGlobal PromptHandleGlobal(std::uint32_t slot) { return ScriptGlobal(kPromptPoolGlobal).At(slot, kPromptPoolStride).At(kPromptPoolHandleField); }
+	static_assert(PromptHandleGlobal(0).Index() == 1945188 + 1 + 3 && PromptHandleGlobal(2).Index() == 1945188 + 1 + 2 * 18 + 3); // the size word is skipped
 
 	namespace
 	{
@@ -1559,6 +1633,344 @@ namespace PokerCheat
 		}
 	}
 
+	// Bet hotkeys, ported from ..\BlackjackCheat's: Right/Left arrow move
+	// the amount 5 chips (5x what one press of the game's own Up/Down
+	// does), Tab jumps to the most the game allows -- all-in or the table
+	// cap on your turn, the table's max buy-in (or all your cash) on the
+	// buy-in prompt. Keys are read raw (keyboard.h). All three write the
+	// open UI's amount directly (see BetInputLocal()'s comment) -- the
+	// mod's only memory write -- clamped exactly like the game's own
+	// func_1252/func_985, so every value is one the game could have reached
+	// itself. The game then labels its own prompt from it (Check/Call/Bet/
+	// Raise/All In) and places the bet from it.
+	//
+	// Prompts: Tab gets one of ours next to the game's own (same
+	// priority, no group), on INPUT_MINIGAME_POKER_SKIP -- which the game
+	// itself only prompts outside your turn, plus Strauss's hint in his
+	// mission -- labelled with the game's own "All-in"/"Max Bet" (see
+	// kAllInLabel). Registered once, on the UI's first frame:
+	// BlackjackCheat found prompts registered later never show.
+	//
+	// Left/Right get NO prompt of their own -- the step goes on the game's
+	// own "Amount" prompt instead (RelabelAlterPrompt()). Why, all live:
+	// a prompt shows only if EVERY control on it is in the active input
+	// context, and the active context is just the TOP layer of
+	// _SET_CONTROL_CONTEXT's stack (its first argument is a layer, not a
+	// control type): at your turn layer 0 = OnFoot, layer 4 = MinigamePoker
+	// (poker_sp's func_10 sets it every frame), and OnFoot's controls are
+	// NOT active. No MinigamePoker control is on the arrow keys, so:
+	//  - every arrow control (GAME_MENU_, FRONTEND_, FRONTEND_NAV_,
+	//    FRONTEND_MAP_NAV_LEFT/RIGHT, DOCUMENT_PAGE_PREV/NEXT) -> hidden,
+	//    alone or with an in-context control added, in either order;
+	//  - an in-context control with no binding at all
+	//    (MULTIPLAYER_INFO_PLAYERS, POKER_CHEAT_LR) -> hidden;
+	//  - HELP_PREV (in context, gamepad-only) -> shows, but with its
+	//    gamepad D-pad-left icon even on keyboard;
+	//  - not a visible-prompt limit: 8 showed at once, and an arrow prompt
+	//    registered in All-in's place, with All-in gone, stayed hidden;
+	//  - MinigameBlackjack on layer 5 (every frame): the arrow prompt
+	//    SHOWED -- but it replaced MinigamePoker, hiding Bet/Fold/Your
+	//    Cards/Community Cards and breaking poker's controls.
+	// The only way left would be patching MinigamePoker's control list in
+	// RDR2.exe's memory -- judged not worth it.
+	namespace
+	{
+		constexpr Hash kBetMaxPromptControl = rage::Joaat("INPUT_MINIGAME_POKER_SKIP");
+		static_assert(kBetMaxPromptControl == 0x646A7792);
+
+		// Tab's prompt text: the game's own labels from its MGPKR text block
+		// (poker_sp loads it -- TEXT_BLOCK_REQUEST("MGPKR") -- before any
+		// prompt of ours can exist), so it's already in the player's
+		// language. The plain forms of what func_1252 shows as "All-in
+		// (~1$~)"/"Max Bet (~1$~)" (MGPKR_UI_ALLIN/MGPKR_UI_MAX_BET),
+		// found in mgpkr.yldb from each <lang>_rel.rpf: en "All-in"/"Max
+		// Bet", fr "Tapis"/"Mise maximum", de "All-in"/"Maximaler Einsatz".
+		// All-in when Tab puts in your whole stack, like func_1252's own
+		// choice; Max Bet when the table cap or a call-only turn is lower,
+		// and on the buy-in prompt.
+		constexpr const char* kAllInLabel = "MGPKR_INFO_ALLIN_DONE";
+		constexpr const char* kMaxBetLabel = "MGPKR_INFO_MAX_BET_DONE";
+
+		constexpr std::int32_t kBetHotkeySteps = 5;
+		constexpr int kPromptPriority = 3; // the game's own bet prompts' (func_450's 11th argument)
+
+		enum class AmountInput
+		{
+			None,
+			Bet,
+			BuyIn,
+		};
+
+		struct BetHotkeyState
+		{
+			AmountInput input = AmountInput::None; // the UI the prompts were registered for
+			Prompt max = 0;
+			bool alterRelabeled = false;
+
+			// Right/Left hold-to-repeat, func_984's state (see BetRepeat).
+			int heldDirection = 0;  // +1 Right, -1 Left, 0 neither
+			float accumulated = 0.0f;
+			float rate = 0.0f;      // steps per second
+		};
+		BetHotkeyState g_betHotkeys;
+
+		// `text` is a VAR_STRING result: a game label, or LITERAL_STRING.
+		Prompt RegisterBetPrompt(std::initializer_list<Hash> controls, const char* text)
+		{
+			Prompt prompt = HUD::_UI_PROMPT_REGISTER_BEGIN();
+			for (Hash control : controls)
+				HUD::_UI_PROMPT_SET_CONTROL_ACTION(prompt, control);
+			HUD::_UI_PROMPT_SET_TEXT(prompt, text);
+			// Same setup as the game's own prompts (func_450 -> func_1076):
+			// priority 3, transport mode 0, attribute 18, standard mode, then
+			// visible + enabled after registering (func_1531/func_1532).
+			HUD::_UI_PROMPT_SET_PRIORITY(prompt, kPromptPriority);
+			HUD::_UI_PROMPT_SET_TRANSPORT_MODE(prompt, 0);
+			HUD::_UI_PROMPT_SET_ATTRIBUTE(prompt, 18, true);
+			HUD::_UI_PROMPT_SET_STANDARD_MODE(prompt, false);
+			HUD::_UI_PROMPT_REGISTER_END(prompt);
+			HUD::_UI_PROMPT_SET_VISIBLE(prompt, true);
+			HUD::_UI_PROMPT_SET_ENABLED(prompt, true);
+			return prompt;
+		}
+
+		void ResetBetHotkeys()
+		{
+			if (g_betHotkeys.max != 0 && HUD::_UI_PROMPT_IS_VALID(g_betHotkeys.max))
+				HUD::_UI_PROMPT_DELETE(g_betHotkeys.max);
+			g_betHotkeys = BetHotkeyState{};
+		}
+
+		// func_984's hold-to-repeat, with the game's own values for both
+		// UIs (the static initial values of f_281.f_5/f_298.f_3, the same
+		// as blackjack's): a press moves one step at once, holding repeats
+		// at 7 steps/s and speeds up x1.08 per repeat, capped at 200/s.
+		// Here a step is the 5-chip jump.
+		constexpr float kRepeatStartRate = 7.0f;
+		constexpr float kRepeatMaxRate = 200.0f;
+		constexpr float kRepeatRateGrowth = 1.08f;
+
+		// Steps to move this frame for the held direction (+1/-1/0).
+		std::int32_t BetRepeat(int direction)
+		{
+			BetHotkeyState& state = g_betHotkeys;
+			if (direction != state.heldDirection)
+			{
+				state.heldDirection = direction;
+				state.accumulated = 0.0f;
+				state.rate = kRepeatStartRate;
+				return direction;
+			}
+			if (direction == 0)
+				return 0;
+
+			state.accumulated += MISC::GET_FRAME_TIME() * state.rate;
+			if (state.accumulated < 1.0f)
+				return 0;
+
+			const std::int32_t steps = static_cast<std::int32_t>(std::lround(state.accumulated));
+			state.accumulated = 0.0f;
+			state.rate = (std::min)(state.rate * kRepeatRateGrowth, kRepeatMaxRate);
+			return direction * steps;
+		}
+
+		// The bet/raise UI's limits, in chips on top of seat.f_4 --
+		// func_1614(table, settings, seat, ..., true): `min` is 0 (check)
+		// or the call, `minRaise` the smallest raise, `max` the most you
+		// can put in (your stack, the table cap, or just the call if you
+		// may not raise).
+		struct BetLimits
+		{
+			std::int32_t min = 0;
+			std::int32_t minRaise = 0;
+			std::int32_t max = -1;
+			std::int32_t stack = 0; // seat.f_2 -- max == stack is all-in (func_1252's MGPKR_UI_ALLIN check)
+		};
+
+		BetLimits BetInputLimits(rage::scrThread* thread)
+		{
+			const std::int32_t seat = MySeatLocal(thread).AsInt32();
+			if (seat < 0 || seat >= static_cast<std::int32_t>(kSeatCount))
+				return {};
+
+			const ScriptLocal table = TableALocal(thread);
+			const ScriptLocal seatLocal = SeatLocal(table, static_cast<std::uint32_t>(seat));
+			const ScriptLocal settings = SettingsLocal(thread);
+			const std::int32_t call = table.At(kTableCallField).AsInt32();
+			const std::int32_t streetBet = seatLocal.At(kSeatStreetBetField).AsInt32();
+
+			BetLimits limits;
+			limits.min = call;
+			limits.minRaise = (call == 0) ? table.At(kTableOpenBetField).AsInt32() : call + table.At(kTableRaiseField).AsInt32();
+			limits.stack = seatLocal.At(kSeatStackField).AsInt32();
+			limits.max = limits.stack + streetBet;
+
+			const std::int32_t cap = settings.At(kSettingsCapField).AsInt32();
+			if (settings.At(kSettingsLimitTypeField).AsInt32() == kCappedLimitType && cap > 0)
+				limits.max = (std::min)(limits.max, cap - seatLocal.At(kSeatHandTotalField).AsInt32() + streetBet);
+			if (seatLocal.At(kSeatCanRaiseField).AsInt32() == 0)
+				limits.max = (std::min)(limits.max, call);
+
+			limits.min = (std::min)(limits.min, limits.max) - streetBet;
+			limits.minRaise = (std::min)(limits.minRaise, limits.max) - streetBet;
+			limits.max -= streetBet;
+			return limits;
+		}
+
+		// func_1252's clamp: below the call -> the call; between the call
+		// and the minimum raise -> whichever of the two the move heads to.
+		std::int32_t ClampBet(const BetLimits& limits, std::int32_t wanted, std::int32_t delta)
+		{
+			if (wanted < limits.min)
+				return limits.min;
+			if (wanted > limits.min && wanted < limits.minRaise)
+				return (delta < 0) ? limits.min : limits.minRaise;
+			if (wanted > limits.max)
+				return limits.max;
+			return wanted;
+		}
+
+		// Writes a new amount, with func_986's sound.
+		void SetAmount(const ScriptLocal& amountLocal, std::int32_t value, bool atLimit, std::string_view key)
+		{
+			const std::int32_t amount = amountLocal.AsInt32();
+			if (value == amount)
+				return;
+
+			const bool written = amountLocal.SetInt32(value);
+			AUDIO::_STOP_SOUND_WITH_NAME("BET_AMOUNT", "HUD_POKER");
+			AUDIO::PLAY_SOUND_FRONTEND(atLimit ? "BET_MIN_MAX" : "BET_AMOUNT", "HUD_POKER", true, 0);
+			Log::Write("BetHotkeys: {} set the amount {} -> {} chips{}", key, amount, value, written ? "" : " (write FAILED)");
+		}
+
+		// "$2.50" -- cents as dollars.
+		void AppendDollars(std::string& out, std::int32_t cents)
+		{
+			std::array<char, 12> digits{};
+			out.push_back('$');
+			out.append(digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), cents / 100).ptr);
+			out.push_back('.');
+			out.push_back(static_cast<char>('0' + (cents % 100) / 10));
+			out.push_back(static_cast<char>('0' + cents % 10));
+		}
+
+		// Puts the step on the game's own "Amount" prompt (MGPKR_UI_ALTER,
+		// its Up/Down): "-/+$1.25 <Left><Right> Amount", the arrows as inline
+		// control icons (`~INPUT_...~`, as the game's own help text does).
+		// The game draws a prompt's own icons AFTER its text, so this reads
+		// "-/+$1.25 <Left><Right> Amount <Up><Down>" -- each label before its
+		// keys, like every other line ("Fold F"). Live: the inline icons
+		// render; being text, they don't light up on a press -- only the
+		// prompt's own Up/Down does.
+		// "Amount" is read back from the game in the player's language. The
+		// game sets that prompt's text only when it creates it, and deletes
+		// it with the UI, so nothing to restore. Returns false until the
+		// game has created it.
+		bool RelabelAlterPrompt(rage::scrThread* thread, AmountInput input, std::int32_t chipValue)
+		{
+			const std::int32_t slot = (input == AmountInput::Bet)
+				? BetInputLocal(thread).At(kBetInputAlterPromptField).AsInt32()
+				: BuyInInputLocal(thread).At(kBuyInInputAlterPromptField).AsInt32();
+			if (slot <= 0 || slot > kPromptPoolLastSlot)
+				return false;
+			const Prompt prompt = PromptHandleGlobal(static_cast<std::uint32_t>(slot)).AsInt32();
+			if (!HUD::_UI_PROMPT_IS_VALID(prompt))
+				return false;
+
+			std::string label("-/+");
+			AppendDollars(label, kBetHotkeySteps * chipValue);
+			label.append(" ~INPUT_GAME_MENU_LEFT~~INPUT_GAME_MENU_RIGHT~ ");
+			label.append(HUD::GET_STRING_FROM_HASH_KEY(rage::Joaat("MGPKR_UI_ALTER")));
+			HUD::_UI_PROMPT_SET_TEXT(prompt, MISC::VAR_STRING(10, "LITERAL_STRING", label.c_str()));
+			Log::Write("BetHotkeys: relabeled the game's Amount prompt (slot {}, handle {}) to \"{}\"", slot, prompt, label);
+			return true;
+		}
+
+		AmountInput OpenAmountInput(rage::scrThread* thread)
+		{
+			const ScriptLocal bet = BetInputLocal(thread);
+			if (bet.AsInt32() != 0 && bet.At(kBetInputResultField).AsInt32() == 0)
+				return AmountInput::Bet;
+			const ScriptLocal buyIn = BuyInInputLocal(thread);
+			if (buyIn.AsInt32() != 0 && buyIn.At(kBuyInInputResultField).AsInt32() == 0)
+				return AmountInput::BuyIn;
+			return AmountInput::None;
+		}
+
+		void UpdateBetHotkeys(rage::scrThread* thread)
+		{
+			const AmountInput input = thread ? OpenAmountInput(thread) : AmountInput::None;
+			if (input != g_betHotkeys.input)
+				ResetBetHotkeys();
+			if (input == AmountInput::None)
+				return;
+
+			const std::int32_t chipValue = PromptHudLocal(thread).At(kChipValueField).AsInt32();
+			if (chipValue <= 0)
+				return;
+
+			if (g_betHotkeys.input == AmountInput::None)
+			{
+				bool allIn = false;
+				if (input == AmountInput::Bet)
+				{
+					const BetLimits limits = BetInputLimits(thread);
+					allIn = limits.max == limits.stack;
+				}
+				g_betHotkeys.input = input;
+				g_betHotkeys.max = RegisterBetPrompt({ kBetMaxPromptControl }, MISC::VAR_STRING(2, allIn ? kAllInLabel : kMaxBetLabel));
+			}
+			if (!g_betHotkeys.alterRelabeled)
+				g_betHotkeys.alterRelabeled = RelabelAlterPrompt(thread, input, chipValue);
+
+			// Right wins if both are held, like func_1252's INCREASE-first
+			// else-if. IsKeyDown stays true while Windows keeps sending
+			// auto-repeat keydowns.
+			const bool rightHeld = IsKeyDown(VK_RIGHT);
+			const bool leftHeld = IsKeyDown(VK_LEFT);
+			const std::int32_t steps = BetRepeat(rightHeld ? 1 : leftHeld ? -1 : 0);
+			// A Tab released with Alt held (Alt+Tab, or Tab during Alt's
+			// free-look camera) isn't a max bet. Uses the Alt flag on the Tab
+			// event itself: Alt's own release can be lost when Alt+Tab takes
+			// focus away (BlackjackCheat, live). Consumed either way.
+			bool tab = false;
+			if (IsKeyJustUp(VK_TAB, false))
+			{
+				tab = !IsKeyWithAlt(VK_TAB);
+				ResetKeyState(VK_TAB);
+				if (!tab)
+					Log::Write("BetHotkeys: ignored Tab released with Alt held");
+			}
+			if (steps == 0 && !tab)
+				return;
+
+			const std::string_view key = tab ? "Tab" : (steps > 0) ? "Right" : "Left";
+			const std::int32_t delta = steps * kBetHotkeySteps;
+			if (input == AmountInput::Bet)
+			{
+				const BetLimits limits = BetInputLimits(thread);
+				if (limits.max < limits.min)
+					return;
+				const ScriptLocal amountLocal = BetInputLocal(thread).At(kBetInputAmountField);
+				const std::int32_t value = tab ? limits.max : ClampBet(limits, amountLocal.AsInt32() + delta, delta);
+				SetAmount(amountLocal, value, value == limits.min || value == limits.max, key);
+			}
+			else
+			{
+				// func_390: each buy-in limit capped at your cash, in chips.
+				const std::int32_t cashChips = MONEY::_MONEY_GET_CASH_BALANCE() / chipValue;
+				const ScriptLocal settings = SettingsLocal(thread);
+				const std::int32_t min = (std::min)(settings.At(kSettingsBuyInMinField).AsInt32(), cashChips);
+				const std::int32_t max = (std::min)(settings.At(kSettingsBuyInMaxField).AsInt32(), cashChips);
+				if (max < min)
+					return;
+				const ScriptLocal amountLocal = BuyInInputLocal(thread).At(kBuyInInputAmountField);
+				const std::int32_t value = tab ? max : (std::max)(min, (std::min)(amountLocal.AsInt32() + delta, max));
+				SetAmount(amountLocal, value, value == min || value == max, key);
+			}
+		}
+	}
+
 	void OnTick()
 	{
 #ifdef _DEBUG
@@ -1569,7 +1981,15 @@ namespace PokerCheat
 #endif
 
 		if (!Enabled)
+		{
+			ResetBetHotkeys();
 			return;
+		}
+
+		if (Config::Get().BetHotkeys)
+			UpdateBetHotkeys(GamePointers::FindScriptThread(rage::Joaat("poker_sp")));
+		else
+			ResetBetHotkeys();
 
 		DrawOverlay();
 	}

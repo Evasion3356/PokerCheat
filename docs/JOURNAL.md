@@ -3179,3 +3179,72 @@ the AI seats Tight-Passive/Tight-Aggressive/Loose-Aggressive instead of
 the real Tight-Aggressive/Loose-Aggressive/Tight-Passive. Nothing in the
 game's own UI shows a seat's personality, so this rests on the memory
 reads plus the decompile's zero-init/assign-on-AI-seat logic.
+
+## Session 24 -- bet hotkeys, ported from BlackjackCheat
+
+Right/Left arrow move the bet 5 chips (hold to repeat, func_984's own
+ramp: 7 steps/s, x1.08 per repeat, capped at 200/s), Tab jumps to the
+most the game allows. Gated by the new `BetHotkeys` INI key (default on).
+Covers both amount-entry UIs, all in `uLocal_14.f_2979` (static trace,
+see the layout block in `PokerCheat.cpp`):
+
+- Bet/raise, `f_2979.f_281`: opened by func_652 on your turn only
+  (func_648: `f_114.f_9 == seat`), run by func_1252. Amount `f_281.f_4`
+  is chips on top of the street bet `seat.f_4`; clamped to func_1614's
+  [check/call, min raise, max] with anything between call and min raise
+  snapping by direction -- `BetInputLimits()`/`ClampBet()` copy that.
+- Buy-in, `f_2979.f_298`: func_389/func_390, amount `f_298.f_2`,
+  clamped to the table's `f_114.f_10.f_12/f_13` capped at cash.
+- `f_2979.f_157` is cents per chip. Both repeat structs start with the
+  static `uLocal_3279`/`uLocal_3294 = 1088421888` (7f), which pins the
+  slots with static_asserts.
+
+Tab's prompt text is the game's own: `MGPKR_INFO_ALLIN_DONE` ("All-in")
+when Tab would put in the whole stack, else `MGPKR_INFO_MAX_BET_DONE`
+("Max Bet"). Found by extracting `mgpkr.yldb` (poker_sp's own text block,
+`TEXT_BLOCK_REQUEST("MGPKR")`, not in `global.yldb`) from
+`GXT\<lang>_rel.rpf` with RDR2 RPF Tool and matching every `MGPKR_*`
+literal in the scripts against it with `..\ChallengeCheat\tools\
+dump_labels.py`. Passed as `VAR_STRING(2, label)`, so the game localizes
+it (fr "Tapis", not our old "MISE MAX").
+
+### Why Left/Right have no prompt of their own
+
+Established live, over several test builds:
+
+- A prompt shows only if EVERY control on it is in the active input
+  context. `_SET_CONTROL_CONTEXT`'s first argument is a layer; only the
+  top non-empty layer is active. At your turn: layer 0 = OnFoot, layer 4
+  = MinigamePoker (poker_sp's func_10, every frame).
+- MinigamePoker has no control on the arrow keys. Every arrow control
+  (GAME_MENU_, FRONTEND_, FRONTEND_NAV_, FRONTEND_MAP_NAV_LEFT/RIGHT,
+  DOCUMENT_PAGE_PREV/NEXT) hides the prompt -- alone, or with an
+  in-context control added in either order.
+- In-context but unbound (MULTIPLAYER_INFO_PLAYERS, POKER_CHEAT_LR):
+  hidden. In-context gamepad-only (HELP_PREV): shows, with a D-pad icon.
+- Not a count limit: 8 prompts showed at once; an arrow prompt put in
+  All-in's place (All-in unregistered) stayed hidden.
+- MinigameBlackjack on layer 5 made the arrow prompt show, but replaced
+  MinigamePoker: Bet/Fold/Your Cards/Community Cards vanished.
+- `_UI_PROMPT_IS_ACTIVE` is 0 even for prompts on screen -- not a
+  visibility test.
+
+Instead the step goes on the game's own Amount prompt, as
+"-/+$0.25 <Left><Right> Amount <Up><Down>": inline `~INPUT_...~` icons
+render in LITERAL_STRING prompt text (they don't light up on a press).
+The prompt handle is `Global_1945188[slot /*18*/].f_3`, slot from
+`f_281.f_16` (`f_298.f_13` for buy-in), read through the new
+`ScriptGlobal.h` (ScriptLocal's rules; `At(i, stride)` skips the size
+word). The game draws a prompt's own icons after its text, so "Amount"
+goes last. Adding the arrows to MinigamePoker's control list in memory
+would allow a real prompt; not worth it.
+
+Also: Arthur's seat portrait sometimes showing the blank `avatar_generic`
+is poker_sp's own fallback (func_1197) when his headshot
+(`Global_1899750`) isn't ready within 5 s (func_367) -- unrelated to the
+mod.
+
+### Open questions
+
+- The buy-in UI's hotkeys and relabeled Amount prompt are untested live.
+- Not yet confirmed that a Tab all-in places (and pays) the amount shown.

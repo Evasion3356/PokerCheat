@@ -41,6 +41,12 @@ namespace GamePointers
 	// "slot legitimately holds 0" before trusting a whole struct's reads.
 	bool IsScriptLocalInRange(rage::scrThread* thread, std::uint32_t index);
 
+	// Returns the ADDRESS of script-local slot `index` -- i.e.
+	// thread->m_Stack + index*8 itself, not what's stored there -- or
+	// nullptr if it's out of range. For ScriptLocal::SetInt32(), the bet
+	// hotkeys' one memory write (see PokerCheat.cpp's UpdateBetHotkeys()).
+	void* GetScriptLocalAddress(rage::scrThread* thread, std::uint32_t index);
+
 	// Dumps every script-local slot of `thread` (or just [startSlot,
 	// startSlot+count) for the overload below) to a JSONL file at
 	// `outPath` -- one JSON object per line, every plausible
