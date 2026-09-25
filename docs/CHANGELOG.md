@@ -5,7 +5,18 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
-## [Unreleased]
+## [1.5.0] - 2026-09-25
+
+### Added
+- Bet hotkeys: Right/Left arrow raise/lower your bet by 5 chips (hold to
+  repeat), Tab jumps straight to the most the game allows. Works on your
+  bet/raise turn and on the buy-in prompt, always within the game's own
+  limits. The game's Amount prompt shows the arrow keys, and Tab gets its
+  own prompt in the game's own language ("All-in" when it bets your whole
+  stack, otherwise "Max Bet"). Turn off with the new `BetHotkeys` key in
+  `PokerCheat.ini`.
+- The download now includes a default `PokerCheat.ini` listing every
+  setting.
 
 ### Fixed
 - Opponent personality labels ("Tight-Aggressive" etc.) now belong to
