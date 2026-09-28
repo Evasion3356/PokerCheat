@@ -5,6 +5,18 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.6.0] - 2026-09-27
+
+### Changed
+- Each opponent's personality label ("Tight-Aggressive" etc.) is replaced
+  by their odds of what they'd do if they acted now, e.g.
+  "Fold 62%  Call 30%  Raise 8%" ("Bet" when nobody has bet yet). Worked
+  out from the game's own AI decision logic and that opponent's actual
+  hand strength, personality, position, stack and the bet to call, in
+  the game's own words for your language. The setting is now
+  `ShowOpponentOdds` in `PokerCheat.ini` (replaces
+  `ShowOpponentPersonality`).
+
 ## [1.5.0] - 2026-09-25
 
 ### Added
