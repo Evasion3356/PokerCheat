@@ -12,7 +12,9 @@ cards for every seat and the board directly out of `poker_sp`'s own
 script memory, predicts the final board (real revealed cards + the
 deterministic future cards sitting at the current deck cursor), and shows
 an on-screen HUD with everyone's hand and a WIN/LOSE/CHOP verdict for the
-player. Hand scoring is fully self-contained (`src/PokerHandEval.h`, unit
+player, plus each opponent's odds of folding/checking/calling/raising if
+they acted now (`src/PokerAiOdds.h`, a port of the game's own AI decision
+engine). Hand scoring is fully self-contained (`src/PokerHandEval.h`, unit
 tested -- see Tests below) rather than delegated to the game's own
 hand-rank native. The one memory write is the bet hotkeys
 (`UpdateBetHotkeys()`, ported from `../BlackjackCheat`, `BetHotkeys` INI
@@ -125,7 +127,16 @@ duplicate that could silently drift out of sync:
 bin\Debug\PokerHandEvalTests.exe
 ```
 
-Exits 0 and prints `ALL PASS` if every case passes; nonzero with a
+`tests/PokerAiOddsTests.vcxproj` does the same for `src/PokerAiOdds.h`
+(the port of poker_sp's AI decision engine behind the opponent
+"Fold 62%  Call 30%" odds -- see `docs/JOURNAL.md` Session 25):
+
+```
+"C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\MSBuild.exe" tests\PokerAiOddsTests.vcxproj /p:Configuration=Debug /p:Platform=x64 /nologo /v:minimal
+bin\Debug\PokerAiOddsTests.exe
+```
+
+Both exit 0 and print `ALL PASS` if every case passes; nonzero with a
 `[FAIL]` line per failing case otherwise. Add a new case here (and run it)
 before changing hand-scoring logic in `PokerHandEval.h` -- that logic went
 unverified against real hands for 9 sessions previously (see

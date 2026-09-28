@@ -2,9 +2,8 @@
 	Localizes the handful of strings this mod actually draws on screen in
 	a Release build: the (You Win)/(They Win)/(Tie) verdict wording (see
 	PokerCheat.cpp's DrawSeatCardIcons()/DrawWinPredictionStatus()) and
-	the opponent personality/style tag ("Tight-Aggressive" etc., see
-	PersonalityLabel()'s original header comment, now moved to
-	Localization.cpp above kPersonalityLabels). Everything else this file
+	the action words of the opponent odds line ("Fold 62%", see
+	ActionLabel()). Everything else this file
 	draws (HandCategoryName(), the seat/board debug text panel) is
 	#ifdef _DEBUG-only -- a dev diagnostic surface, never shown to an end
 	user -- and stays English-only; not worth translating.
@@ -20,8 +19,8 @@
 	Translations beyond English are LLM-assisted, not yet reviewed by a
 	native speaker per language -- if a wording is wrong for a given
 	language, fix the corresponding row in Localization.cpp's
-	kPersonalityLabels/kVerdictLabels tables directly, no other file
-	needs to change.
+	kVerdictLabels table directly, no other file needs to change. The
+	action words are the game's own text, not translations.
 */
 
 #pragma once
@@ -88,17 +87,19 @@ namespace Localization
 	// regardless of what language the game/ini is actually set to.
 	std::string_view VerdictLabel(Language lang, int vsResult);
 
-	// Opponent personality/style label -- see PokerCheat.cpp's
-	// kPersonalityField header comment for what personalityIndex
-	// (0-14) means and how it's read. Returns "" for any index outside
-	// that range, same as the original PersonalityLabel()'s default
-	// case (suppresses the personality half of the on-screen tag). Uses
-	// Current() for the language.
-	std::string_view PersonalityLabel(std::int32_t personalityIndex);
+	enum class PokerAction : std::int32_t
+	{
+		Fold, Check, Call, Bet, Raise,
+		Count
+	};
+
+	// The game's own word for an action (poker_sp's MGPKR_UI_* prompts,
+	// see kActionLabels in Localization.cpp). Uses Current().
+	std::string_view ActionLabel(PokerAction action);
 
 	// Same as above but for an explicitly named language -- see
 	// VerdictLabel(Language, int)'s comment.
-	std::string_view PersonalityLabel(Language lang, std::int32_t personalityIndex);
+	std::string_view ActionLabel(Language lang, PokerAction action);
 
 	// Short language code ("en-US", "fr-FR", ...) for a given language --
 	// purely for the Debug-only font test's on-screen labels/log lines,

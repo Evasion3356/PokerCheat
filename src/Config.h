@@ -66,15 +66,12 @@ namespace Config
 		// equivalent tag in the debug text panel.
 		bool ShowWouldWinHandAgainst = true;
 
-		// Opponent personality/style label ("Tight-Aggressive" etc.),
-		// drawn on the same line as the (You Win)/(They Win)/(Tie) tag --
-		// see PokerCheat.cpp's PersonalityLabel()/kPersonalityField
-		// header comment for where this reads from and docs/JOURNAL.md
-		// Session 14 for how it was traced. Purely informational (no RNG
-		// involved, unlike the abandoned fold-prediction idea in Session
-		// 17) -- every seat's personality is a fixed value for as long as
-		// they're sitting there, read directly, not guessed.
-		bool ShowOpponentPersonality = true;
+		// Each opponent's odds of folding/checking/calling/raising if they
+		// acted now ("Fold 62%  Call 30%  Raise 8%"), drawn on the same
+		// line as the (You Win)/(They Win)/(Tie) tag -- the game's own AI
+		// decision engine run over its random rolls, see PokerAiOdds.h.
+		// Replaces the old ShowOpponentPersonality style label.
+		bool ShowOpponentOdds = true;
 
 		// Right/Left arrow = bet 5 chips up/down (hold to repeat, like the
 		// game's own Up/Down), Tab = the most the game allows, with a "-/+"

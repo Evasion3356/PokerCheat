@@ -3248,3 +3248,60 @@ mod.
 
 - The buy-in UI's hotkeys and relabeled Amount prompt are untested live.
 - Not yet confirmed that a Tab all-in places (and pays) the amount shown.
+
+## Session 25 -- opponent action odds replace the personality label
+
+User asked whether an NPC's next fold/call/raise can be predicted, then
+asked for "Fold 62%"-style odds in place of the personality label
+("passive-whatever means fuck-all to the player"). Session 17 dropped an
+*exact* prediction (one shared game-wide RNG stream). Odds don't need the
+roll: every other input to `func_1628` is readable, and the three random
+draws are uniform over known ranges.
+
+### What the trace settled (beyond Session 14)
+
+- **The equity the AI uses is stored, not re-rolled per decision.**
+  `func_290` (state 4, hole cards dealt) calls `func_618`, which writes
+  `f_2655.f_1[seat] = func_1223(hole)` -- a fixed hole-card rating. At
+  stakes tiers 1-3 only, `func_292` (state 6, street dealt) calls
+  `func_692` (reset, `*f_2655 = 1`), and `func_690` then replaces one seat
+  per frame with the Monte Carlo win rate until `*f_2655 = 2`. So the value
+  read is the value used; the only unreadable window is `*f_2655 == 1`.
+  Tier 0 keeps the preflop rating all hand (`func_692` returns early), and
+  `func_690` has no tier-0 case for its trial count.
+- **The AI decides from Table A.** The state handlers are invoked as
+  `f_2015[f_2010](uLocal_14, &f_114.f_287)` (line 8151), and `func_291`
+  -> `func_654` -> `func_1255(&f_2655, table, ...)` passes that on.
+- Table A `f_3` = dealer, `f_5` = big blind (blind posting, line ~39676);
+  `func_1709` measures position to the big blind at tier 0, the dealer
+  otherwise.
+- Every "bet/raise" branch goes through `func_1757`'s clamp (built on
+  `func_1614` with a blank settings struct, so no table cap) and then
+  `func_1704`, which can turn it into a call or check. E.g. the passive
+  row's low-band "raise" (`owed * random(1, 1)`) always ends up a call, and
+  anything between the call and the minimum raise snaps to the call when
+  under `min + minRaise / 2` (read literally from the decompile).
+- Cutoffs (`func_1712`/`1713`/`1718`, by active-seat count) and
+  `func_584`'s f_9/f_13 tables are now in `PokerAiOdds.h` / read live.
+
+### Code
+
+- `src/PokerAiOdds.h`: game-free port of `func_1628` + helpers; integrates
+  the rolls on a fixed 48-point grid per draw (deterministic, no flicker).
+  `tests/PokerAiOddsTests.vcxproj` checks hand-worked cases.
+- `PokerCheat.cpp`: `ReadAiOdds()` (Table A, f_2655 tables, pot per
+  `func_870`) and `AiOddsText()`; the seat label shows
+  "Fold 62%  Call 30%  Raise 8%" (Bet when nobody has bet).
+- Action words are the game's own (`mgpkr.yldb` `MGPKR_UI_FOLD/_CHECK/
+  _CALL/_BET/_RAISE`, amount placeholder stripped), all 13 languages,
+  verified by script against the extracted text; the personality label
+  table is gone. INI: `ShowOpponentPersonality` -> `ShowOpponentOdds` (old
+  key removed on load).
+
+### Open questions
+
+- Not yet checked live against real AI decisions (log odds vs. action).
+- Odds assume the seat acts against the table as it is now; a raise
+  before its turn changes them. Special personalities (styleCode != 0)
+  show nothing.
+- `%` in the `_BG_DISPLAY_TEXT` literal string is assumed to render.

@@ -63,6 +63,7 @@
 
 #include "PokerCheat.h"
 #include "PokerHandEval.h"
+#include "PokerAiOdds.h"
 #include "Log.h"
 #include "GamePointers.h"
 #include "ScriptLocal.h"
@@ -265,13 +266,39 @@ namespace PokerCheat
 	// `var uLocal_2873 = 6;` (14 + 114 + 2655 + 90 = 2873). The old flat
 	// read (2873 + seat, on the belief that f_90 had no size word) got 6
 	// for seat 0 and seat N-1's personality for seat N. At(seat, 1) reads
-	// 2874 + seat. See docs/JOURNAL.md Session 14 (func_1628, the real
-	// decision engine this index feeds) and the kPersonalityLabels header
-	// comment in Localization.cpp for the index->label mapping. Purely a
-	// fixed-per-seat read, no RNG/prediction involved (unlike the
-	// abandoned fold-prediction feature, Session 17).
+	// 2874 + seat. The index selects a row of f_44 ({p1, p2, styleCode},
+	// see kAiProfilesField); func_185 only ever seats 5-8, the four
+	// styleCode-0 corners of the p1 (equity multiplier, loose..tight) x
+	// p2 (bet sizes, passive..aggressive) grid -- docs/JOURNAL.md Sessions
+	// 14 and 18. PokerAiOdds.h is what it feeds.
 	constexpr std::uint32_t kAiField = 2655;              // f_114.f_2655
 	constexpr std::uint32_t kPersonalityField = 90;       // f_2655.f_90[seat]
+
+	// The rest of the AI struct (func_584/func_585/func_690, poker_sp.ysc.c
+	// lines 25437-25510 and 28182) -- everything func_1628 reads besides the
+	// table. Every array here has its size word declared in the decompile
+	// (`uLocal_2784 = 6`, `uLocal_2792 = 3`, `uLocal_2796 = 3`,
+	// `uLocal_2827 = 15`), pinned by the static_asserts below.
+	constexpr std::uint32_t kAiEquityField = 1;           // f_2655.f_1[seat] -- win chance the AI decides with
+	constexpr std::uint32_t kAiMultiplierField = 9;       // f_2655.f_9[p1] -- equity multiplier
+	constexpr std::uint32_t kAiSizesField = 13;           // f_2655.f_13[p2 /*10*/] -- bet-size ranges
+	constexpr std::uint32_t kAiSizesStride = 10;
+	constexpr std::uint32_t kAiProfilesField = 44;        // f_2655.f_44[personality /*3*/] -- {p1, p2, styleCode}
+	constexpr std::uint32_t kAiProfileStride = 3;
+	constexpr std::uint32_t kAiProfileMultiplierIndex = 0;
+	constexpr std::uint32_t kAiProfileSizesIndex = 1;
+	constexpr std::uint32_t kAiProfileStyleCode = 2;      // 0 = func_1628, the only engine PokerAiOdds ports
+	constexpr std::int32_t kAiEquityRefreshing = 1;       // f_2655 itself: 1 while func_690 recomputes f_1, one seat a frame
+	constexpr std::int32_t kAiProfileCount = 15;
+	constexpr std::int32_t kAiRowCount = 3;               // f_9 and f_13 each have 3 rows
+
+	// Table fields only the AI odds read (the rest are next to kTableCallField).
+	constexpr std::uint32_t kTableStakesTierField = 2;    // Table.f_2 -- 0 = the free table
+	constexpr std::uint32_t kTableDealerField = 3;        // Table.f_3 -- dealer seat (blind-posting code, line ~39676)
+	constexpr std::uint32_t kTableBigBlindField = 5;      // Table.f_5 -- big-blind seat
+	constexpr std::uint32_t kTablePotsField = 376;        // Table.f_376[i /*18*/] -- pots, amount first (`uLocal_791 = 6` for Table A)
+	constexpr std::uint32_t kTablePotStride = 18;
+	constexpr std::uint32_t kTablePotCountField = 485;    // Table.f_485 -- pots in use
 
 	// .f_606 -- the deck. Confirmed via func_589 (builds a plain,
 	// UN-prefixed 52-card array directly at the deck's own base -- 4
@@ -362,7 +389,12 @@ namespace PokerCheat
 	constexpr ScriptLocal HoleCardLocal(const ScriptLocal& seat, std::uint32_t card) { return seat.At(kSeatHoleCardsField).At(card, kCardStride); }
 	constexpr ScriptLocal DeckLocal(const ScriptLocal& table) { return table.At(kDeckField); }
 	constexpr ScriptLocal DeckCardLocal(rage::scrThread* thread, std::int32_t card) { return DeckLocal(TableBLocal(thread)).At(kDeckCardsField).At(static_cast<std::uint32_t>(card), kCardStride); }
-	constexpr ScriptLocal PersonalityLocal(rage::scrThread* thread, std::uint32_t seat) { return F114Local(thread).At(kAiField).At(kPersonalityField).At(seat, 1); }
+	constexpr ScriptLocal AiLocal(rage::scrThread* thread) { return F114Local(thread).At(kAiField); }
+	constexpr ScriptLocal PersonalityLocal(rage::scrThread* thread, std::uint32_t seat) { return AiLocal(thread).At(kPersonalityField).At(seat, 1); }
+	constexpr ScriptLocal AiEquityLocal(rage::scrThread* thread, std::uint32_t seat) { return AiLocal(thread).At(kAiEquityField).At(seat, 1); }
+	constexpr ScriptLocal AiProfileLocal(rage::scrThread* thread, std::uint32_t personality) { return AiLocal(thread).At(kAiProfilesField).At(personality, kAiProfileStride); }
+	constexpr ScriptLocal AiMultiplierLocal(rage::scrThread* thread, std::uint32_t row) { return AiLocal(thread).At(kAiMultiplierField).At(row, 1); }
+	constexpr ScriptLocal AiSizesLocal(rage::scrThread* thread, std::uint32_t row) { return AiLocal(thread).At(kAiSizesField).At(row, kAiSizesStride); }
 	constexpr ScriptLocal CommunityCardObjectLocal(rage::scrThread* thread, std::uint32_t slot) { return RootLocal(thread).At(kSceneField).At(kSceneCardPropsField).At(kCommunityCardObjectsField).At(slot, 1); }
 
 	// Pinned to the absolute slots the old flat constants read, every one
@@ -383,6 +415,10 @@ namespace PokerCheat
 	// Deliberately NOT the old slot (2873 + seat, which was f_90's size
 	// word for seat 0) -- see kPersonalityField.
 	static_assert(PersonalityLocal(nullptr, 0).Index() == 2874);
+	// Each one slot past its array's declared size word (see kAiEquityField).
+	static_assert(AiLocal(nullptr).Index() == 2783 && AiEquityLocal(nullptr, 0).Index() == 2785 && AiMultiplierLocal(nullptr, 0).Index() == 2793);
+	static_assert(AiSizesLocal(nullptr, 0).Index() == 2797 && AiProfileLocal(nullptr, 0).Index() == 2828);
+	static_assert(TableALocal(nullptr).At(kTablePotsField).Index() == 791);
 
 	// The two amount-entry UIs, both in the prompt/HUD struct
 	// uLocal_14.f_2979. Static trace only:
@@ -497,13 +533,6 @@ namespace PokerCheat
 				default: return '?';
 			}
 		}
-
-		// Opponent personality/style labels ("Tight-Aggressive" etc.) now
-		// live in Localization.cpp's kPersonalityLabels (one row per
-		// supported language) -- see that file for the full derivation
-		// comment (traced from poker_sp.ysc.c's func_584/func_1191/
-		// func_185) this function used to carry. Callers use
-		// Localization::PersonalityLabel(personalityIndex) directly.
 
 		const char* HandCategoryName(std::int32_t category)
 		{
@@ -727,12 +756,12 @@ namespace PokerCheat
 		// Y. vsMeResult: 1 = you win, -1 = they win, 0 = tie, 2 = no
 		// comparison available (e.g. opponent inactive/folded, or you
 		// have no hand) -- suppresses the win/lose half of the label.
-		// personalityLabel: empty string suppresses the personality half
-		// (see Localization::PersonalityLabel()/ShowOpponentPersonality) -- the two
-		// halves are independent, either can show without the other.
+		// oddsText: the opponent's action odds (AiOddsText()); empty
+		// suppresses that half (ShowOpponentOdds) -- the two halves are
+		// independent, either can show without the other.
 		// cardSetDict: this frame's already-looked-up card-set dictionary
 		// (non-empty), same as DrawCommunityCardIcons().
-		void DrawSeatCardIcons(std::string_view cardSetDict, int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, std::string_view personalityLabel)
+		void DrawSeatCardIcons(std::string_view cardSetDict, int relOffset, std::int32_t rank0, std::int32_t suit0, std::int32_t rank1, std::int32_t suit1, int vsMeResult, std::string_view oddsText)
 		{
 #ifdef _DEBUG
 			const Config::Values& cfg = Config::Get();
@@ -782,18 +811,18 @@ namespace PokerCheat
 			// tag inside the string itself, so this is left-aligned
 			// starting at the icon pair's left edge rather than centered.
 			//
-			// The personality half (e.g. "Tight-Aggressive") and the
+			// The odds half (e.g. "Fold 62%  Call 38%") and the
 			// win/lose half share this one line, independently toggled --
-			// ShowOpponentPersonality/ShowWouldWinHandAgainst -- so either
+			// ShowOpponentOdds/ShowWouldWinHandAgainst -- so either
 			// can appear without the other. When the win/lose half is
 			// showing, its color drives the whole line (matches the
 			// existing behavior exactly); otherwise a neutral cream tone
 			// is used, same tone DrawLine()'s Debug-only text panel uses
 			// elsewhere in this file, kept local here since that function
 			// isn't compiled into Release builds.
-			bool showPersonality = Config::Get().ShowOpponentPersonality && !personalityLabel.empty();
+			bool showOdds = Config::Get().ShowOpponentOdds && !oddsText.empty();
 			bool showVsMe = Config::Get().ShowWouldWinHandAgainst && vsMeResult != 2;
-			if (showPersonality || showVsMe)
+			if (showOdds || showVsMe)
 			{
 				const std::string_view vsLabel = Localization::VerdictLabel(vsMeResult);
 				int labelR = showVsMe ? ((vsMeResult > 0) ? 140 : (vsMeResult < 0) ? 255 : 255) : 235;
@@ -804,8 +833,8 @@ namespace PokerCheat
 				float labelY = y + height + labelOffsetY;
 
 				const char* formatText = BgFormatText(30, {
-					showPersonality ? personalityLabel : std::string_view(),
-					showPersonality && showVsMe ? std::string_view(" - ") : std::string_view(),
+					showOdds ? oddsText : std::string_view(),
+					showOdds && showVsMe ? std::string_view(" - ") : std::string_view(),
 					showVsMe ? vsLabel : std::string_view() });
 
 				UIDEBUG::_BG_SET_TEXT_COLOR(labelR, labelG, labelB, 255);
@@ -1001,16 +1030,13 @@ namespace PokerCheat
 		{
 			Localization::Language lang = static_cast<Localization::Language>(FontTestLanguageIndex);
 
-			// Personality index 8 ("Tight-Aggressive" in English) is one
-			// of the four real corner values ever shown at an actual
-			// table (see Localization.cpp's kPersonalityLabels header
-			// comment) and, in most languages, the longest of the four --
-			// picked so a PARTIAL glyph failure (some characters render,
-			// some show as tofu) is easier to spot than with a shorter
-			// sample. Paired with the "you win" verdict wording so both
-			// of this mod's actual on-screen strings get covered by one
+			// Every action word of the odds line plus the "you win" verdict,
+			// so all of this mod's on-screen strings get covered by one
 			// sample line.
-			std::string sampleText = std::string(Localization::PersonalityLabel(lang, 8)) + " - " + std::string(Localization::VerdictLabel(lang, 1));
+			std::string sampleText;
+			for (int action = 0; action < static_cast<int>(Localization::PokerAction::Count); action++)
+				sampleText += std::string(Localization::ActionLabel(lang, static_cast<Localization::PokerAction>(action))) + " 10%  ";
+			sampleText += std::string(Localization::VerdictLabel(lang, 1));
 
 			// Same token list Session 11 tried (see the header comment
 			// above). $gamername is the sole exception found in Session
@@ -1164,6 +1190,97 @@ namespace PokerCheat
 					nextRow++;
 				}
 			}
+		}
+
+		// Odds of each action `seat` would take if it acted now -- see
+		// PokerAiOdds.h. Reads what func_1628 reads: Table A (func_654 hands
+		// the AI f_114.f_287, not the engine's B), the seat's stored equity
+		// and its personality's row of the AI tables. Invalid while func_690
+		// is mid-refresh (f_1 is zeroed then filled a seat a frame), and for
+		// the card-blind special personalities (styleCode != 0), which
+		// func_185 never seats.
+		PokerAiOdds::Odds ReadAiOdds(rage::scrThread* thread, std::uint32_t seat)
+		{
+			if (AiLocal(thread).AsInt32() == kAiEquityRefreshing)
+				return {};
+
+			const std::int32_t personality = PersonalityLocal(thread, seat).AsInt32();
+			if (personality < 0 || personality >= kAiProfileCount)
+				return {};
+
+			const ScriptLocal profileLocal = AiProfileLocal(thread, static_cast<std::uint32_t>(personality));
+			const std::int32_t multiplierRow = profileLocal.At(kAiProfileMultiplierIndex).AsInt32();
+			const std::int32_t sizesRow = profileLocal.At(kAiProfileSizesIndex).AsInt32();
+			if (profileLocal.At(kAiProfileStyleCode).AsInt32() != 0 || multiplierRow < 0 || multiplierRow >= kAiRowCount || sizesRow < 0 || sizesRow >= kAiRowCount)
+				return {};
+
+			PokerAiOdds::Profile profile;
+			profile.equityMultiplier = AiMultiplierLocal(thread, static_cast<std::uint32_t>(multiplierRow)).AsFloat();
+			const ScriptLocal sizesLocal = AiSizesLocal(thread, static_cast<std::uint32_t>(sizesRow));
+			for (std::uint32_t i = 0; i < profile.sizes.size(); i++)
+				profile.sizes[i] = sizesLocal.At(i).AsFloat();
+
+			const ScriptLocal tableA = TableALocal(thread);
+			PokerAiOdds::Table table;
+			table.stakesTier = tableA.At(kTableStakesTierField).AsInt32();
+			table.dealer = tableA.At(kTableDealerField).AsInt32();
+			table.bigBlind = tableA.At(kTableBigBlindField).AsInt32();
+			table.callLevel = tableA.At(kTableCallField).AsInt32();
+			table.lastRaise = tableA.At(kTableRaiseField).AsInt32();
+			table.openBet = tableA.At(kTableOpenBetField).AsInt32();
+
+			// func_870: the pots so far, plus this street's bets (func_387:
+			// every seat that's in the hand at all, folded included).
+			const std::int32_t potCount = (std::min)(tableA.At(kTablePotCountField).AsInt32(), static_cast<std::int32_t>(kSeatCount));
+			for (std::int32_t i = 0; i < potCount; i++)
+				table.pot += tableA.At(kTablePotsField).At(static_cast<std::uint32_t>(i), kTablePotStride).AsInt32();
+
+			for (std::uint32_t i = 0; i < kSeatCount; i++)
+			{
+				const ScriptLocal seatLocal = SeatLocal(tableA, i);
+				PokerAiOdds::Seat& s = table.seats[i];
+				s.occupied = seatLocal.At(kSeatOccupiedField).AsInt32() != -1;
+				s.state = seatLocal.At(kSeatStateField).AsInt32();
+				s.stack = seatLocal.At(kSeatStackField).AsInt32();
+				s.streetBet = seatLocal.At(kSeatStreetBetField).AsInt32();
+				s.canRaise = seatLocal.At(kSeatCanRaiseField).AsInt32() != 0;
+				if (s.occupied && s.state != -1)
+					table.pot += s.streetBet;
+			}
+
+			return PokerAiOdds::Predict(table, static_cast<int>(seat), AiEquityLocal(thread, seat).AsFloat(), profile);
+		}
+
+		// "Fold 62%  Call 30%  Raise 8%" in the game's own words, skipping
+		// anything under 0.5%; empty for no prediction. Built into one
+		// reused buffer (per-frame Release text, see BgFormatText()); valid
+		// until the next call. Bet instead of Raise when nobody has bet.
+		std::string_view AiOddsText(const PokerAiOdds::Odds& odds, bool nobodyBet)
+		{
+			static std::string buffer;
+			buffer.clear();
+			if (!odds.valid)
+				return buffer;
+
+			const auto append = [](Localization::PokerAction action, float chance)
+			{
+				const int percent = static_cast<int>(std::lround(chance * 100.0f));
+				if (percent <= 0)
+					return;
+
+				if (!buffer.empty())
+					buffer.append("  ");
+				buffer.append(Localization::ActionLabel(action));
+				buffer.push_back(' ');
+				std::array<char, 4> digits{};
+				buffer.append(digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), percent).ptr);
+				buffer.push_back('%');
+			};
+			append(Localization::PokerAction::Fold, odds.fold);
+			append(Localization::PokerAction::Check, odds.check);
+			append(Localization::PokerAction::Call, odds.call);
+			append(nobodyBet ? Localization::PokerAction::Bet : Localization::PokerAction::Raise, odds.raise);
+			return buffer;
 		}
 
 		void DrawOverlay()
@@ -1436,9 +1553,6 @@ namespace PokerCheat
 				std::int32_t card1Rank = HoleCardLocal(engineSeat, 1).At(kCardRankField).AsInt32();
 				std::int32_t card1Suit = HoleCardLocal(engineSeat, 1).At(kCardSuitField).AsInt32();
 
-				std::int32_t personalityIndex = PersonalityLocal(thread, seat).AsInt32();
-				const std::string_view personalityLabel = Localization::PersonalityLabel(personalityIndex);
-
 				bool isMe = (static_cast<std::int32_t>(seat) == mySeat);
 
 				if (handInProgress && isActive && !isMe && (card0Rank < 2 || card1Rank < 2))
@@ -1497,6 +1611,12 @@ namespace PokerCheat
 
 				const Config::Values& cfg = Config::Get();
 
+				// What this opponent would do if it acted now (Table A's
+				// f_7 == 0: nobody has bet, so a raise is a bet).
+				std::string_view oddsText;
+				if (!isMe && isActive && cfg.ShowOpponentOdds)
+					oddsText = AiOddsText(ReadAiOdds(thread, seat), tableA.At(kTableCallField).AsInt32() == 0);
+
 #ifdef _DEBUG
 				// Your own seat is always shown in full -- that's your
 				// own hand, not hidden information. Opponents' cards/
@@ -1518,8 +1638,8 @@ namespace PokerCheat
 						<< (category >= 0 ? HandCategoryName(category) : "?")
 						<< " (stack " << stack << ", bet " << bet << ")"
 						<< stateLabel << shownVsMe << (isMe ? "  (You)" : "");
-					if (!isMe && !personalityLabel.empty())
-						line << "  [" << personalityLabel << "]";
+					if (!isMe && !oddsText.empty())
+						line << "  [" << oddsText << "]";
 				}
 				DrawLine(x, y, line.str().c_str());
 				y += kLineHeight;
@@ -1545,7 +1665,7 @@ namespace PokerCheat
 				{
 					int denseRow = denseRowForSeat[seat];
 					if (denseRow != 0 && !cardSetDict.empty())
-						DrawSeatCardIcons(cardSetDict, denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult, personalityLabel);
+						DrawSeatCardIcons(cardSetDict, denseRow, card0Rank, card0Suit, card1Rank, card1Suit, vsMeResult, oddsText);
 				}
 			}
 
