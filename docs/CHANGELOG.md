@@ -5,6 +5,17 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.7.0] - 2026-09-29
+
+### Added
+- Bet hints on your turn, after each opponent's odds. Against an opponent
+  you're beating, the most you can bet before they'd fold, e.g.
+  "(Raise $4.50: Call)". Against one who beats or ties you, the smallest
+  bet that makes them fold, with the chance it works, e.g.
+  "(Raise $12.00: Fold 85%)". The bluff hint only appears if some bet
+  would fold them. Shown along with the odds (`ShowOpponentOdds` in
+  `PokerCheat.ini`).
+
 ## [1.6.0] - 2026-09-27
 
 ### Changed

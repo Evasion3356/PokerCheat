@@ -3394,3 +3394,37 @@ the same bet scan as `FindFoldBet()`, now shared as `ScanBets()`);
 `ReadBetHint()` picks by `vsMeResult`. Same line format for both: a value
 hint reads "(Raise $X: Fold 0%)". The recorder attaches the hint actually
 drawn (`g_shownHints`, Debug) with `"hintKind"`.
+
+## Session 29 -- second recording; recorder timing fixes; value hint wording
+
+Second live session (Debug, 25 hands, 169 npcAction lines). Predictions:
+8/8 full boards and 24/24 showdown winners matched. 53 of the npcAction
+lines were recorder artifacts; the 116 real decisions all had a nonzero
+predicted chance (mean 0.916).
+
+- **Table A is NOT replaced whole per engine step** (Session 27's
+  assumption). A call's `f_3` lands a few frames before `f_6` moves on, so
+  the recorder resolved the call, then captured the same seat again and
+  logged a phantom check (50 lines). Now a seat isn't captured again until
+  `f_6` has left it (`actedThisTurn`).
+- After the river's betting closes `f_6` still walks the seats (all
+  `canRaise` 0, street bets reset) and `Predict()` has no answer: the 3
+  "0%" checks. Only seats with valid odds are captured now.
+- The same timing hit your own turn: your bet lands before `f_6` moves,
+  the HUD then drops the hint (you can't raise any more), and the
+  recorder overwrote the hint you'd seen with that empty one -- no line
+  of the session had hint fields, though the user saw and used the hints.
+  Hints are no longer updated once your own `f_3` changes, and
+  `myHandTotalAtTurn` is read on your turn's first frame only (it made
+  `myBet` 0 before).
+- Replaying the recorded tables through `FindFoldBet`/`FindValueBet` as
+  if seat 0 were to act: of 51 spots where you could raise, 25 had a
+  bluff hint and 36 a value hint.
+
+User: the hints worked ("if I wanted them to bet, I bet the value it
+displayed and they bet as well") but "Fold 0%" on the value hint was
+unclear. The value hint now reads "(Raise $X: Call)"; the bluff hint keeps
+"(Raise $X: Fold N%)".
+
+Open: hint accuracy is still unmeasured -- needs a recording with the
+fixed recorder (`hintKind`/`hintBet`/`myBet` vs. `played`).

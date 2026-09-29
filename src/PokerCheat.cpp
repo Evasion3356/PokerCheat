@@ -1388,12 +1388,12 @@ namespace PokerCheat
 		// "Call 100%  (Raise $0.60: Fold 100%)" in the game's own words: the
 		// odds, skipping anything under 0.5%, then the bet hint if there is
 		// one (money as the bet prompt shows it: chips * cents per chip) --
-		// a value hint reads "Fold 0%" (the most it still pays), a bluff hint
-		// the fold chance it buys.
+		// a value hint reads "(Raise $X: Call)" (the most it still pays), a
+		// bluff hint "(Raise $X: Fold N%)", the fold chance it buys.
 		// Empty for no prediction. Built into one reused buffer (per-frame
 		// Release text, see BgFormatText()); valid until the next call. Bet
 		// instead of Raise when nobody has bet.
-		std::string_view AiOddsText(const PokerAiOdds::Odds& odds, bool nobodyBet, const PokerAiOdds::FoldBet& foldBet, std::int32_t centsPerChip)
+		std::string_view AiOddsText(const PokerAiOdds::Odds& odds, bool nobodyBet, const BetHint& hint, std::int32_t centsPerChip)
 		{
 			static std::string buffer;
 			buffer.clear();
@@ -1417,16 +1417,23 @@ namespace PokerCheat
 			append(Localization::PokerAction::Call, odds.call);
 			append(raise, odds.raise);
 
-			if (foldBet.found && centsPerChip > 0)
+			if (hint.kind != HintKind::None && centsPerChip > 0)
 			{
 				buffer.append("  (");
 				buffer.append(Localization::ActionLabel(raise));
 				buffer.push_back(' ');
-				AppendDollars(buffer, foldBet.bet * centsPerChip);
+				AppendDollars(buffer, hint.bet.bet * centsPerChip);
 				buffer.append(": ");
-				buffer.append(Localization::ActionLabel(Localization::PokerAction::Fold));
-				buffer.push_back(' ');
-				AppendPercent(buffer, foldBet.foldChance);
+				if (hint.kind == HintKind::Value)
+				{
+					buffer.append(Localization::ActionLabel(Localization::PokerAction::Call));
+				}
+				else
+				{
+					buffer.append(Localization::ActionLabel(Localization::PokerAction::Fold));
+					buffer.push_back(' ');
+					AppendPercent(buffer, hint.bet.foldChance);
+				}
 				buffer.push_back(')');
 			}
 			return buffer;
@@ -1528,6 +1535,11 @@ namespace PokerCheat
 				HandState hand;
 				std::array<PendingAction, kSeatCount> pending{};
 				std::array<Hint, kSeatCount> hints{};
+				// Set once a seat's action is written, cleared when the turn
+				// moves off it: a call lands in Table A (f_3 changes) a few
+				// frames before f_6 moves on, and without this the seat was
+				// captured again and logged a phantom check.
+				std::array<bool, kSeatCount> actedThisTurn{};
 				std::int32_t lastHandState = -1;
 				std::int32_t lastActingSeat = -1;
 				std::int32_t myHandTotalAtTurn = -1;
@@ -1780,6 +1792,8 @@ namespace PokerCheat
 				if (!inHand)
 				{
 					g_state.pending = {};
+					g_state.actedThisTurn = {};
+					g_state.myHandTotalAtTurn = -1;
 					return;
 				}
 
@@ -1801,6 +1815,12 @@ namespace PokerCheat
 					g_state.myHandTotalAtTurn = -1;
 				}
 				g_state.lastActingSeat = acting;
+
+				// Your bet/call lands in Table A a few frames before f_6 moves
+				// on, and the HUD then drops the hint (you can't raise any
+				// more) -- keep the hints you saw before that.
+				const bool myActionLanded = acting == mySeat && g_state.myHandTotalAtTurn >= 0
+					&& SeatLocal(tableA, static_cast<std::uint32_t>(mySeat)).At(kSeatHandTotalField).AsInt32() != g_state.myHandTotalAtTurn;
 
 				for (std::uint32_t s = 0; s < kSeatCount; s++)
 				{
@@ -1824,26 +1844,33 @@ namespace PokerCheat
 							played = PokerAiOdds::Action::Call;
 						WriteNpcAction(s, p, played, put, street);
 						p = PendingAction{};
+						g_state.actedThisTurn[s] = true;
 					}
+					if (acting != static_cast<std::int32_t>(s))
+						g_state.actedThisTurn[s] = false;
 
-					if (!p.valid && acting == static_cast<std::int32_t>(s) && state == 0)
+					if (!p.valid && !g_state.actedThisTurn[s] && acting == static_cast<std::int32_t>(s) && state == 0)
 					{
 						// A 0-chip seat (all-in by a raise; f_6 stays 0) is
 						// skipped by the game, not asked to decide -- the
 						// first recording logged those as phantom checks.
 						const AiInputs in = ReadAiInputs(thread, s);
-						if (in.valid && in.table.seats[s].stack > 0)
+						// Also none when the model has no prediction: after the
+						// river's betting closes, f_6 still walks the seats
+						// (all canRaise 0, street bets reset) with no decision.
+						const PokerAiOdds::Odds odds = in.valid ? PokerAiOdds::Predict(in.table, static_cast<int>(s), in.equity, in.profile) : PokerAiOdds::Odds{};
+						if (odds.valid && in.table.seats[s].stack > 0)
 						{
 							p.valid = true;
 							p.in = in;
-							p.odds = PokerAiOdds::Predict(in.table, static_cast<int>(s), in.equity, in.profile);
+							p.odds = odds;
 							p.handTotalBefore = handTotal;
 							p.owed = in.table.callLevel - in.table.seats[s].streetBet;
 						}
 					}
 
-					// Your turn: remember the fold hint shown for this seat.
-					if (acting == mySeat && state == 0)
+					// Your turn: remember the bet hint shown for this seat.
+					if (acting == mySeat && state == 0 && !myActionLanded)
 					{
 						Hint& hint = g_state.hints[s];
 						hint.shown = g_shownHints[s];
@@ -1852,7 +1879,9 @@ namespace PokerCheat
 					}
 				}
 
-				if (acting == mySeat && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
+				// First frame of your turn only: your own bet lands in Table A
+				// before f_6 moves on, and re-reading it then made myBet 0.
+				if (acting == mySeat && g_state.myHandTotalAtTurn < 0 && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
 					g_state.myHandTotalAtTurn = SeatLocal(tableA, static_cast<std::uint32_t>(mySeat)).At(kSeatHandTotalField).AsInt32();
 			}
 		}
@@ -2202,7 +2231,7 @@ namespace PokerCheat
 					if (odds.valid)
 						g_shownHints[seat] = hint;
 #endif
-					oddsText = AiOddsText(odds, tableA.At(kTableCallField).AsInt32() == 0, hint.bet,
+					oddsText = AiOddsText(odds, tableA.At(kTableCallField).AsInt32() == 0, hint,
 						PromptHudLocal(thread).At(kChipValueField).AsInt32());
 				}
 
