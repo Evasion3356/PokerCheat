@@ -3305,3 +3305,92 @@ draws are uniform over known ranges.
   before its turn changes them. Special personalities (styleCode != 0)
   show nothing.
 - `%` in the `_BG_DISPLAY_TEXT` literal string is assumed to render.
+
+## Session 26 -- "(Raise $X: Fold N%)": the smallest bet that folds each opponent
+
+User saw "Call 100%" flip to "Fold 100%" the instant they went all-in,
+then asked for the bet that would do that shown up front, on the same line.
+
+- **Fold decisions never touch the aggression/bet-size rolls.** `func_1628`
+  folds only from its two threshold tests (score under the fold cutoff, or
+  low band with `owed >= stack / 2`), both before those rolls. So a fold
+  chance is just the flag's chance times two yes/no tests --
+  `PokerAiOdds::FoldChance()`, cheap enough to search bet sizes with.
+- **Your bet folds them one way: the owed amount reaching half their
+  stack** (exact integer threshold, low band only). A first version also
+  assumed a heads-up all-in quirk -- an all-in seat (`f_6 == 2`) isn't
+  counted by `func_665`, and the cutoffs indexed by that count fold
+  anything under 1.0 at index 1 -- and modeled your all-in raise as
+  setting state 2. **Wrong, caught live:** the HUD said "Raise $22.07:
+  Fold" (the user's whole stack), they shoved, and it flipped to Call
+  100%. `func_1104`'s raise case never touches `seat.f_6`: the seat stays
+  active (0) with a 0 stack, and only `func_468` marks all-in seats (2)
+  once the betting round is over. So a shove leaves the active count and
+  cutoffs alone. `WithBet()` now mirrors `func_1104` case 2 (also
+  `f_8 = max(f_8, raise)` via `func_1552`, and the `f_5` can-raise flags);
+  regression test added.
+- `FindFoldBet()` checks the half-stack bet exactly plus an even spread
+  up to your max, then narrows to the smallest bet within 0.5% of the
+  best chance. Multiway it takes the worse of the seats between you and
+  the target all staying in or all folding (folds lower the cutoffs).
+- HUD: only on your turn (Table A `f_6` == your seat) and when you may
+  raise; amounts are chips on top of your street bet (the bet box's own
+  unit), shown as chips * `f_2979.f_157` cents per chip via
+  `AppendDollars`. Cached per seat until any input changes.
+
+Open: not yet checked live; the "all seats between fold/stay" worst case
+ignores mixed outcomes (some fold, some stay).
+
+## Session 27 -- hand record (JSONL) and always-on in Debug
+
+User asked for DominoCheat's game-record approach here, to compare the
+predictions against what really happened. Added `src/HandRecord.h` (ported
+from DominoCheat's `GameRecord.h`, plus shortest-round-trip floats) and a
+Debug-only `HandRecorder` in `PokerCheat.cpp` writing
+`PokerCheat_hands.jsonl` (format and fields: `HandRecord.h`'s header):
+
+- `npcAction`: captured on the first frame Table A's `f_6` (seat to act)
+  is that opponent with readable AI inputs, resolved when `f_6` moves on
+  or the seat's fold state / `f_3` (put in this hand) changes. The action
+  comes from that diff: folded -> fold; put in 0 -> check; up to the bet
+  owed -> call; more -> raise. `f_3` rather than `f_4` so a street ending
+  on this action (street bets reset) still reads right. Relies on Table A
+  being replaced whole per engine step (the snapshot in the A/B comment).
+- `hand`: opened when `f_2010` enters 4-10, closed at the next one (or
+  when the thread goes). Chips per seat are engine-side `stack + f_3` at
+  each deal, so blinds don't count as a loss; winners = seats whose chips
+  went up. Busted seats read 0.
+- Your fold hints are remembered on your turn and attached (with what you
+  put in) to that seat's next npcAction.
+- `tests/fixtures/hands.jsonl` (empty for now): every npcAction line there
+  is replayed and the real action must have nonzero predicted chance; a
+  write/read round-trip test checks the format is exact.
+
+Also: `ScriptMain` now calls `SetEnabled(true)` in Debug too (same change
+as DominoCheat's c95b983) -- no F10 step after every reinject.
+
+Open: not run live yet -- in particular whether every action lands in one
+Table A copy as assumed, and whether rebuys/leaving between hands skew the
+chip-based winners.
+
+## Session 28 -- first recorded games; hint picked by the verdict
+
+First `PokerCheat_hands.jsonl` from live play (12 hands, 76 npcAction
+lines). Model: every real NPC decision (72/72) had a nonzero predicted
+chance, mean predicted chance of the action taken 0.885. The other 4 were
+recorder bugs, all 0-chip seats (all-in by a raise, `f_6` still 0) whose
+turn the game skips -- logged as phantom checks. Fixed: no capture for a
+0-stack seat. Also fixed: `lastState` was read after the engine's
+between-hands reset to -1 (so no hand ever showed a showdown/predicted
+winner) -- now only in-hand, non -1 states are kept; `boardMatch` is only
+written once all 5 cards came out (the 6 full boards all matched).
+One real line per action type pinned in `tests/fixtures/hands.jsonl`.
+
+User asked for the hint to depend on who wins: against a seat you beat
+(green), show the most you can bet before it folds; against one that beats
+or ties you (red/yellow), the bluff hint, only if a bet folds it. Added
+`PokerAiOdds::FindValueBet()` (largest bet with fold chance < 0.5%, from
+the same bet scan as `FindFoldBet()`, now shared as `ScanBets()`);
+`ReadBetHint()` picks by `vsMeResult`. Same line format for both: a value
+hint reads "(Raise $X: Fold 0%)". The recorder attaches the hint actually
+drawn (`g_shownHints`, Debug) with `"hintKind"`.

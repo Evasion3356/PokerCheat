@@ -65,17 +65,15 @@ void ScriptMain()
 	Config::Reload();
 	GamePointers::GetScriptThreads();
 
+	// Both builds start already polling; Debug's F10 menu can still toggle
+	// it. SetEnabled(true), not Toggle() -- idempotent against ScriptMain
+	// ever being re-entered (see PokerCheat.h's SetEnabled comment).
+	PokerCheat::SetEnabled(true);
 #ifdef _DEBUG
 	// Debug-only -- the F10 test menu (toggle, probes, calibration/font
 	// test tools) is a dev-tuning surface, not something an end user
-	// should ever see. Release has no menu to toggle the cheat from at
-	// all, so it enables itself unconditionally below instead.
+	// should ever see.
 	BuildMenu();
-#else
-	// No menu in Release to flip this from, so start already polling.
-	// SetEnabled(true), not Toggle() -- idempotent against ScriptMain
-	// ever being re-entered (see PokerCheat.h's SetEnabled comment).
-	PokerCheat::SetEnabled(true);
 #endif
 
 	while (true)

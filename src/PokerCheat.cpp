@@ -64,6 +64,7 @@
 #include "PokerCheat.h"
 #include "PokerHandEval.h"
 #include "PokerAiOdds.h"
+#include "HandRecord.h"
 #include "Log.h"
 #include "GamePointers.h"
 #include "ScriptLocal.h"
@@ -82,6 +83,11 @@
 #include <initializer_list>
 #include <string>
 #include <string_view>
+#include <vector>
+#ifdef _DEBUG
+#include <filesystem>
+#include <fstream>
+#endif
 
 namespace PokerCheat
 {
@@ -466,6 +472,7 @@ namespace PokerCheat
 
 	// func_1614's inputs: the table (Table A, f_114.f_287 -- func_653
 	// passes that copy), your seat, and the table settings f_114.f_10.
+	constexpr std::uint32_t kTableActingSeatField = 6;        // Table.f_6 -- the seat to act (func_1628's `num`)
 	constexpr std::uint32_t kTableCallField = 7;              // Table.f_7 -- the street's highest bet (0 = nobody bet yet)
 	constexpr std::uint32_t kTableRaiseField = 8;             // Table.f_8 -- the last raise's size
 	constexpr std::uint32_t kTableOpenBetField = 10;          // Table.f_10 -- the minimum bet when nobody bet yet
@@ -1192,36 +1199,97 @@ namespace PokerCheat
 			}
 		}
 
-		// Odds of each action `seat` would take if it acted now -- see
-		// PokerAiOdds.h. Reads what func_1628 reads: Table A (func_654 hands
-		// the AI f_114.f_287, not the engine's B), the seat's stored equity
-		// and its personality's row of the AI tables. Invalid while func_690
-		// is mid-refresh (f_1 is zeroed then filled a seat a frame), and for
-		// the card-blind special personalities (styleCode != 0), which
-		// func_185 never seats.
-		PokerAiOdds::Odds ReadAiOdds(rage::scrThread* thread, std::uint32_t seat)
+		// The bet/raise UI's limits, in chips on top of seat.f_4 --
+		// func_1614(table, settings, seat, ..., true): `min` is 0 (check)
+		// or the call, `minRaise` the smallest raise, `max` the most you
+		// can put in (your stack, the table cap, or just the call if you
+		// may not raise).
+		struct BetLimits
 		{
-			if (AiLocal(thread).AsInt32() == kAiEquityRefreshing)
+			std::int32_t min = 0;
+			std::int32_t minRaise = 0;
+			std::int32_t max = -1;
+			std::int32_t stack = 0; // seat.f_2 -- max == stack is all-in (func_1252's MGPKR_UI_ALLIN check)
+		};
+
+		BetLimits BetInputLimits(rage::scrThread* thread)
+		{
+			const std::int32_t seat = MySeatLocal(thread).AsInt32();
+			if (seat < 0 || seat >= static_cast<std::int32_t>(kSeatCount))
 				return {};
+
+			const ScriptLocal table = TableALocal(thread);
+			const ScriptLocal seatLocal = SeatLocal(table, static_cast<std::uint32_t>(seat));
+			const ScriptLocal settings = SettingsLocal(thread);
+			const std::int32_t call = table.At(kTableCallField).AsInt32();
+			const std::int32_t streetBet = seatLocal.At(kSeatStreetBetField).AsInt32();
+
+			BetLimits limits;
+			limits.min = call;
+			limits.minRaise = (call == 0) ? table.At(kTableOpenBetField).AsInt32() : call + table.At(kTableRaiseField).AsInt32();
+			limits.stack = seatLocal.At(kSeatStackField).AsInt32();
+			limits.max = limits.stack + streetBet;
+
+			const std::int32_t cap = settings.At(kSettingsCapField).AsInt32();
+			if (settings.At(kSettingsLimitTypeField).AsInt32() == kCappedLimitType && cap > 0)
+				limits.max = (std::min)(limits.max, cap - seatLocal.At(kSeatHandTotalField).AsInt32() + streetBet);
+			if (seatLocal.At(kSeatCanRaiseField).AsInt32() == 0)
+				limits.max = (std::min)(limits.max, call);
+
+			limits.min = (std::min)(limits.min, limits.max) - streetBet;
+			limits.minRaise = (std::min)(limits.minRaise, limits.max) - streetBet;
+			limits.max -= streetBet;
+			return limits;
+		}
+
+		// "$2.50" -- cents as dollars.
+		void AppendDollars(std::string& out, std::int32_t cents)
+		{
+			std::array<char, 12> digits{};
+			out.push_back('$');
+			out.append(digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), cents / 100).ptr);
+			out.push_back('.');
+			out.push_back(static_cast<char>('0' + (cents % 100) / 10));
+			out.push_back(static_cast<char>('0' + cents % 10));
+		}
+
+		// Everything func_1628 reads for `seat` -- see PokerAiOdds.h: Table A
+		// (func_654 hands the AI f_114.f_287, not the engine's B), the seat's
+		// stored equity and its personality's row of the AI tables. Invalid
+		// while func_690 is mid-refresh (f_1 is zeroed then filled a seat a
+		// frame), and for the card-blind special personalities (styleCode
+		// != 0), which func_185 never seats.
+		struct AiInputs
+		{
+			bool valid = false;
+			PokerAiOdds::Table table;
+			PokerAiOdds::Profile profile;
+			float equity = 0.0f;
+		};
+
+		AiInputs ReadAiInputs(rage::scrThread* thread, std::uint32_t seat)
+		{
+			AiInputs in;
+			if (AiLocal(thread).AsInt32() == kAiEquityRefreshing)
+				return in;
 
 			const std::int32_t personality = PersonalityLocal(thread, seat).AsInt32();
 			if (personality < 0 || personality >= kAiProfileCount)
-				return {};
+				return in;
 
 			const ScriptLocal profileLocal = AiProfileLocal(thread, static_cast<std::uint32_t>(personality));
 			const std::int32_t multiplierRow = profileLocal.At(kAiProfileMultiplierIndex).AsInt32();
 			const std::int32_t sizesRow = profileLocal.At(kAiProfileSizesIndex).AsInt32();
 			if (profileLocal.At(kAiProfileStyleCode).AsInt32() != 0 || multiplierRow < 0 || multiplierRow >= kAiRowCount || sizesRow < 0 || sizesRow >= kAiRowCount)
-				return {};
+				return in;
 
-			PokerAiOdds::Profile profile;
-			profile.equityMultiplier = AiMultiplierLocal(thread, static_cast<std::uint32_t>(multiplierRow)).AsFloat();
+			in.profile.equityMultiplier = AiMultiplierLocal(thread, static_cast<std::uint32_t>(multiplierRow)).AsFloat();
 			const ScriptLocal sizesLocal = AiSizesLocal(thread, static_cast<std::uint32_t>(sizesRow));
-			for (std::uint32_t i = 0; i < profile.sizes.size(); i++)
-				profile.sizes[i] = sizesLocal.At(i).AsFloat();
+			for (std::uint32_t i = 0; i < in.profile.sizes.size(); i++)
+				in.profile.sizes[i] = sizesLocal.At(i).AsFloat();
 
 			const ScriptLocal tableA = TableALocal(thread);
-			PokerAiOdds::Table table;
+			PokerAiOdds::Table& table = in.table;
 			table.stakesTier = tableA.At(kTableStakesTierField).AsInt32();
 			table.dealer = tableA.At(kTableDealerField).AsInt32();
 			table.bigBlind = tableA.At(kTableBigBlindField).AsInt32();
@@ -1248,40 +1316,547 @@ namespace PokerCheat
 					table.pot += s.streetBet;
 			}
 
-			return PokerAiOdds::Predict(table, static_cast<int>(seat), AiEquityLocal(thread, seat).AsFloat(), profile);
+			in.equity = AiEquityLocal(thread, seat).AsFloat();
+			in.valid = true;
+			return in;
 		}
 
-		// "Fold 62%  Call 30%  Raise 8%" in the game's own words, skipping
-		// anything under 0.5%; empty for no prediction. Built into one
-		// reused buffer (per-frame Release text, see BgFormatText()); valid
-		// until the next call. Bet instead of Raise when nobody has bet.
-		std::string_view AiOddsText(const PokerAiOdds::Odds& odds, bool nobodyBet)
+		// Which bet hint a seat gets, from the showdown verdict against it:
+		// one you beat gets a value hint (the most it still won't fold to),
+		// one that beats or ties you a bluff hint (the least that folds it).
+		enum class HintKind { None, Bluff, Value };
+
+		struct BetHint
+		{
+			HintKind kind = HintKind::None;
+			PokerAiOdds::FoldBet bet;
+		};
+
+		// The bet hint for `seat`, as an amount for the bet box (chips on top
+		// of your street bet -- what BetInputLimits() and the bet hotkeys
+		// use). vsMeResult as DrawSeatCardIcons() takes it (1 you win, 0
+		// tie, -1 they win, 2 unknown). Only on your turn (Table A's f_6 is
+		// the seat to act) and only if you may raise. The search runs dozens
+		// of fold-chance evaluations and the table holds still while you
+		// decide, so each seat's result is cached until an input changes.
+		BetHint ReadBetHint(rage::scrThread* thread, std::uint32_t seat, const AiInputs& in, std::int32_t mySeat, int vsMeResult)
+		{
+			const HintKind kind = (vsMeResult == 1) ? HintKind::Value : (vsMeResult == 0 || vsMeResult == -1) ? HintKind::Bluff : HintKind::None;
+			if (kind == HintKind::None || !in.valid || mySeat < 0 || mySeat >= static_cast<std::int32_t>(kSeatCount) || TableALocal(thread).At(kTableActingSeatField).AsInt32() != mySeat)
+				return {};
+
+			const BetLimits limits = BetInputLimits(thread);
+			if (limits.minRaise <= limits.min || limits.max < limits.minRaise)
+				return {};
+
+			struct Cached
+			{
+				bool set = false;
+				AiInputs in;
+				std::int32_t mySeat = -1;
+				std::int32_t minBet = 0;
+				std::int32_t maxBet = 0;
+				HintKind kind = HintKind::None;
+				PokerAiOdds::FoldBet result;
+			};
+			static std::array<Cached, kSeatCount> cache{};
+
+			Cached& entry = cache[seat];
+			if (!entry.set || entry.mySeat != mySeat || entry.minBet != limits.minRaise || entry.maxBet != limits.max || entry.kind != kind
+				|| entry.in.equity != in.equity || !(entry.in.table == in.table) || !(entry.in.profile == in.profile))
+			{
+				entry.set = true;
+				entry.in = in;
+				entry.mySeat = mySeat;
+				entry.minBet = limits.minRaise;
+				entry.maxBet = limits.max;
+				entry.kind = kind;
+				entry.result = (kind == HintKind::Value)
+					? PokerAiOdds::FindValueBet(in.table, mySeat, static_cast<int>(seat), in.equity, in.profile, limits.minRaise, limits.max)
+					: PokerAiOdds::FindFoldBet(in.table, mySeat, static_cast<int>(seat), in.equity, in.profile, limits.minRaise, limits.max);
+			}
+			return { entry.result.found ? kind : HintKind::None, entry.result };
+		}
+
+		void AppendPercent(std::string& out, float chance)
+		{
+			std::array<char, 4> digits{};
+			out.append(digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), static_cast<int>(std::lround(chance * 100.0f))).ptr);
+			out.push_back('%');
+		}
+
+		// "Call 100%  (Raise $0.60: Fold 100%)" in the game's own words: the
+		// odds, skipping anything under 0.5%, then the bet hint if there is
+		// one (money as the bet prompt shows it: chips * cents per chip) --
+		// a value hint reads "Fold 0%" (the most it still pays), a bluff hint
+		// the fold chance it buys.
+		// Empty for no prediction. Built into one reused buffer (per-frame
+		// Release text, see BgFormatText()); valid until the next call. Bet
+		// instead of Raise when nobody has bet.
+		std::string_view AiOddsText(const PokerAiOdds::Odds& odds, bool nobodyBet, const PokerAiOdds::FoldBet& foldBet, std::int32_t centsPerChip)
 		{
 			static std::string buffer;
 			buffer.clear();
 			if (!odds.valid)
 				return buffer;
 
+			const Localization::PokerAction raise = nobodyBet ? Localization::PokerAction::Bet : Localization::PokerAction::Raise;
 			const auto append = [](Localization::PokerAction action, float chance)
 			{
-				const int percent = static_cast<int>(std::lround(chance * 100.0f));
-				if (percent <= 0)
+				if (std::lround(chance * 100.0f) <= 0)
 					return;
 
 				if (!buffer.empty())
 					buffer.append("  ");
 				buffer.append(Localization::ActionLabel(action));
 				buffer.push_back(' ');
-				std::array<char, 4> digits{};
-				buffer.append(digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), percent).ptr);
-				buffer.push_back('%');
+				AppendPercent(buffer, chance);
 			};
 			append(Localization::PokerAction::Fold, odds.fold);
 			append(Localization::PokerAction::Check, odds.check);
 			append(Localization::PokerAction::Call, odds.call);
-			append(nobodyBet ? Localization::PokerAction::Bet : Localization::PokerAction::Raise, odds.raise);
+			append(raise, odds.raise);
+
+			if (foldBet.found && centsPerChip > 0)
+			{
+				buffer.append("  (");
+				buffer.append(Localization::ActionLabel(raise));
+				buffer.push_back(' ');
+				AppendDollars(buffer, foldBet.bet * centsPerChip);
+				buffer.append(": ");
+				buffer.append(Localization::ActionLabel(Localization::PokerAction::Fold));
+				buffer.push_back(' ');
+				AppendPercent(buffer, foldBet.foldChance);
+				buffer.push_back(')');
+			}
 			return buffer;
 		}
+
+#ifdef _DEBUG
+		// The bet hint drawn for each seat this frame (DrawOverlay()), so the
+		// hand record can attach the one you saw to that seat's next action.
+		std::array<BetHint, kSeatCount> g_shownHints{};
+
+		// ---- Hand record --------------------------------------------------
+		// PokerCheat_hands.jsonl next to PokerCheat.log: one npcAction line
+		// per opponent decision (the AI model's input and odds vs. what it
+		// really did), one hand line per finished hand (predicted board and
+		// showdown winners vs. the real ones). See HandRecord.h for the
+		// format and how a line becomes a test in tests/fixtures/
+		// hands.jsonl. Rolls over at kRollBytes to PokerCheat_hands.1.jsonl
+		// (one old file kept). Same approach as DominoCheat's GameRecorder.
+		namespace HandRecorder
+		{
+			constexpr std::uintmax_t kRollBytes = 4 * 1024 * 1024;
+			constexpr int kHoleInts = 4; // rank,suit,rank,suit per seat
+
+			std::string Timestamp()
+			{
+				SYSTEMTIME t;
+				GetLocalTime(&t);
+				std::ostringstream out;
+				out << std::setfill('0')
+					<< std::setw(4) << t.wYear << '-' << std::setw(2) << t.wMonth << '-' << std::setw(2) << t.wDay
+					<< 'T' << std::setw(2) << t.wHour << ':' << std::setw(2) << t.wMinute << ':' << std::setw(2) << t.wSecond
+					<< '.' << std::setw(3) << t.wMilliseconds;
+				return out.str();
+			}
+
+			void AppendLine(const std::string& line)
+			{
+				static const std::wstring pathText = LogFallback::Resolve(
+					LogFallback::ModuleDirectory(), L"PokerCheat_hands.jsonl", LogFallback::FallbackDirectory()).path;
+				const std::filesystem::path path(pathText);
+				if (path.empty())
+					return;
+
+				std::error_code ec;
+				const std::uintmax_t size = std::filesystem::file_size(path, ec);
+				if (!ec && size >= kRollBytes)
+				{
+					std::filesystem::path rolled = path;
+					rolled.replace_extension(L".1.jsonl");
+					std::filesystem::remove(rolled, ec);
+					std::filesystem::rename(path, rolled, ec);
+				}
+
+				std::ofstream file(path, std::ios::app);
+				file << line << '\n';
+			}
+
+			// An opponent's turn, captured on its first readable frame (Table A
+			// is copied whole per engine step, so it holds still until the
+			// action lands).
+			struct PendingAction
+			{
+				bool valid = false;
+				AiInputs in;
+				PokerAiOdds::Odds odds;
+				std::int32_t handTotalBefore = 0; // seat.f_3
+				std::int32_t owed = 0;
+			};
+
+			// The fold hint that was up for a seat on your last turn, and what
+			// you then put in (-1 until your action lands).
+			struct Hint
+			{
+				bool valid = false;
+				BetHint shown;
+				std::int32_t myPut = -1;
+			};
+
+			struct HandState
+			{
+				bool open = false;
+				std::string id;
+				std::int32_t mySeat = -1;
+				std::int32_t tier = -1;
+				std::array<bool, kSeatCount> occupied{};
+				std::array<std::int32_t, kSeatCount> startChips{};  // stack + put in this hand, at the deal
+				std::array<std::int32_t, kSeatCount * kHoleInts> hole{};
+				std::array<std::int32_t, kSeatCount> lastState{};
+				std::array<std::int32_t, kBoardCardCount * 2> predictedBoard{};
+				std::array<std::int32_t, kBoardCardCount * 2> realBoard{};
+				std::int32_t realReveal = 0;
+				int npcActions = 0;
+				int npcPossible = 0;       // played action had a nonzero predicted chance
+				float npcChanceSum = 0.0f; // sum of the played actions' predicted chances
+			};
+
+			struct State
+			{
+				HandState hand;
+				std::array<PendingAction, kSeatCount> pending{};
+				std::array<Hint, kSeatCount> hints{};
+				std::int32_t lastHandState = -1;
+				std::int32_t lastActingSeat = -1;
+				std::int32_t myHandTotalAtTurn = -1;
+			};
+			State g_state;
+
+			// Chips a seat had before this hand, from the engine (B): its stack
+			// plus what it has put in (blinds included).
+			std::int32_t ChipsBeforeHand(const ScriptLocal& seat)
+			{
+				return seat.At(kSeatStackField).AsInt32() + seat.At(kSeatHandTotalField).AsInt32();
+			}
+
+			// endChips: each seat's chips before the next hand (-1 unknown, e.g.
+			// the table closed).
+			void WriteHand(const std::array<std::int32_t, kSeatCount>& endChips, std::string_view endedBy)
+			{
+				HandState& h = g_state.hand;
+				if (!h.open)
+					return;
+				h.open = false;
+
+				// Our showdown call on the real board, among the seats still in.
+				std::vector<std::int32_t> predictedWinners, actualWinners, stillIn;
+				for (std::uint32_t s = 0; s < kSeatCount; s++)
+				{
+					if (h.occupied[s] && (h.lastState[s] == 0 || h.lastState[s] == 2))
+						stillIn.push_back(static_cast<std::int32_t>(s));
+				}
+				bool showdown = stillIn.size() >= 2 && h.realReveal >= kBoardCardCount;
+				if (stillIn.size() == 1)
+				{
+					predictedWinners = stillIn;
+				}
+				else if (showdown)
+				{
+					HandScore best;
+					for (std::int32_t s : stillIn)
+					{
+						const std::int32_t* card = &h.hole[static_cast<std::size_t>(s) * kHoleInts];
+						if (card[0] < 2 || card[2] < 2)
+							continue;
+						std::int32_t ranks[7] = { card[0], card[2], h.realBoard[0], h.realBoard[2], h.realBoard[4], h.realBoard[6], h.realBoard[8] };
+						std::int32_t suits[7] = { card[1], card[3], h.realBoard[1], h.realBoard[3], h.realBoard[5], h.realBoard[7], h.realBoard[9] };
+						const HandScore score = EvaluateHand(ranks, suits);
+						const int cmp = predictedWinners.empty() ? 1 : CompareHands(score, best);
+						if (cmp > 0)
+						{
+							predictedWinners.clear();
+							best = score;
+						}
+						if (cmp >= 0)
+							predictedWinners.push_back(s);
+					}
+				}
+
+				std::array<std::int32_t, kSeatCount> occupied{};
+				bool chipsKnown = false;
+				for (std::uint32_t s = 0; s < kSeatCount; s++)
+				{
+					occupied[s] = h.occupied[s] ? 1 : 0;
+					if (h.occupied[s] && endChips[s] >= 0)
+					{
+						chipsKnown = true;
+						if (endChips[s] > h.startChips[s])
+							actualWinners.push_back(static_cast<std::int32_t>(s));
+					}
+				}
+
+				const bool fullBoard = h.realReveal >= kBoardCardCount;
+				const bool boardMatch = fullBoard && h.predictedBoard == h.realBoard;
+
+				HandRecord::JsonLine line;
+				line.Add("type", "hand").Add("id", h.id)
+					.Add("endedBy", endedBy)
+					.Add("mySeat", static_cast<std::int64_t>(h.mySeat))
+					.Add("tier", static_cast<std::int64_t>(h.tier))
+					.Add("occupied", occupied.data(), static_cast<int>(kSeatCount))
+					.Add("hole", h.hole.data(), static_cast<int>(h.hole.size()))
+					.Add("lastState", h.lastState.data(), static_cast<int>(kSeatCount))
+					.Add("predictedBoard", h.predictedBoard.data(), static_cast<int>(h.predictedBoard.size()))
+					.Add("realBoard", h.realBoard.data(), h.realReveal * 2);
+				if (fullBoard)
+					line.Add("boardMatch", boardMatch);
+				line.Add("showdown", showdown)
+					.Add("startChips", h.startChips.data(), static_cast<int>(kSeatCount))
+					.Add("endChips", endChips.data(), static_cast<int>(kSeatCount))
+					.Add("predictedWinners", predictedWinners)
+					.Add("actualWinners", actualWinners);
+				if (chipsKnown && !predictedWinners.empty())
+					line.Add("winnerMatch", predictedWinners == actualWinners);
+				line.Add("npcActions", static_cast<std::int64_t>(h.npcActions))
+					.Add("npcPossible", static_cast<std::int64_t>(h.npcPossible))
+					.Add("npcChanceSum", h.npcChanceSum);
+				AppendLine(line.Str());
+				Log::Write("HandRecord: hand {} closed ({}) -- board {}, winners predicted {} actual {}", h.id, endedBy,
+					!fullBoard ? "incomplete" : boardMatch ? "MATCH" : "MISMATCH", predictedWinners.size(), actualWinners.size());
+			}
+
+			void OpenHand(rage::scrThread* thread, std::int32_t mySeat)
+			{
+				HandState& h = g_state.hand;
+				h = HandState{};
+				h.open = true;
+				h.id = Timestamp();
+				h.mySeat = mySeat;
+				const ScriptLocal tableB = TableBLocal(thread);
+				h.tier = tableB.At(kTableStakesTierField).AsInt32();
+				h.hole.fill(-1);
+				h.lastState.fill(-1);
+				for (std::uint32_t s = 0; s < kSeatCount; s++)
+				{
+					const ScriptLocal seat = SeatLocal(tableB, s);
+					h.occupied[s] = seat.At(kSeatOccupiedField).AsInt32() != -1;
+					h.startChips[s] = h.occupied[s] ? ChipsBeforeHand(seat) : 0;
+				}
+
+				std::int32_t ranks[kBoardCardCount];
+				std::int32_t suits[kBoardCardCount];
+				const ScriptLocal deck = DeckLocal(tableB);
+				ReadPredictedBoard(thread, BoardLocal(tableB).At(kBoardRevealCountField).AsInt32(),
+					deck.At(kDeckCursorField).AsInt32(), deck.At(kDeckCountField).AsInt32(), ranks, suits);
+				for (int i = 0; i < kBoardCardCount; i++)
+				{
+					h.predictedBoard[static_cast<std::size_t>(i) * 2] = ranks[i];
+					h.predictedBoard[static_cast<std::size_t>(i) * 2 + 1] = suits[i];
+				}
+
+				g_state.pending = {};
+				g_state.hints = {};
+				g_state.myHandTotalAtTurn = -1;
+			}
+
+			void WriteNpcAction(std::uint32_t seat, const PendingAction& p, PokerAiOdds::Action played, std::int32_t put, std::int32_t street)
+			{
+				const float chance = HandRecord::ChanceOf(p.odds, played);
+				HandRecord::JsonLine line;
+				line.Add("type", "npcAction").Add("id", Timestamp()).Add("hand", g_state.hand.id)
+					.Add("street", static_cast<std::int64_t>(street));
+				HandRecord::WriteAi(line, p.in.table, static_cast<int>(seat), p.in.equity, p.in.profile);
+				line.Add("pFold", p.odds.fold).Add("pCheck", p.odds.check).Add("pCall", p.odds.call).Add("pRaise", p.odds.raise)
+					.Add("played", HandRecord::ActionName(played))
+					.Add("put", static_cast<std::int64_t>(put))
+					.Add("pPlayed", chance);
+
+				Hint& hint = g_state.hints[seat];
+				if (hint.valid && hint.myPut >= 0)
+				{
+					line.Add("hintKind", (hint.shown.kind == HintKind::Value) ? "value" : "bluff")
+						.Add("hintBet", static_cast<std::int64_t>(hint.shown.bet.bet))
+						.Add("hintFold", hint.shown.bet.foldChance)
+						.Add("myBet", static_cast<std::int64_t>(hint.myPut));
+				}
+				hint = Hint{};
+				AppendLine(line.Str());
+
+				HandState& h = g_state.hand;
+				h.npcActions++;
+				h.npcChanceSum += chance;
+				if (chance > 0.0f)
+					h.npcPossible++;
+				if (chance <= 0.0f)
+					Log::Write("HandRecord: seat {} {} -- the model gave that 0% (fold {:.2f} check {:.2f} call {:.2f} raise {:.2f})",
+						seat, HandRecord::ActionName(played), p.odds.fold, p.odds.check, p.odds.call, p.odds.raise);
+			}
+
+			void OnTableGone()
+			{
+				std::array<std::int32_t, kSeatCount> unknown{};
+				unknown.fill(-1);
+				WriteHand(unknown, "tableExit");
+				g_state = State{};
+			}
+
+			void Update(rage::scrThread* thread)
+			{
+				if (!thread || !GamePointers::IsScriptLocalInRange(thread, BoardLocal(TableALocal(thread)).Index()))
+				{
+					OnTableGone();
+					return;
+				}
+
+				const std::int32_t mySeat = MySeatLocal(thread).AsInt32();
+				const std::int32_t handState = HandStateLocal(thread).AsInt32();
+				const bool inHand = handState >= 4 && handState <= 10;
+				const bool handStarted = inHand && !(g_state.lastHandState >= 4 && g_state.lastHandState <= 10);
+				g_state.lastHandState = handState;
+
+				const ScriptLocal tableA = TableALocal(thread);
+				const ScriptLocal tableB = TableBLocal(thread);
+
+				if (handStarted)
+				{
+					// Close the previous hand: chips before this one are the
+					// last one's result. A seat that's gone busted out.
+					std::array<std::int32_t, kSeatCount> endChips{};
+					for (std::uint32_t s = 0; s < kSeatCount; s++)
+					{
+						const ScriptLocal seat = SeatLocal(tableB, s);
+						endChips[s] = (seat.At(kSeatOccupiedField).AsInt32() != -1) ? ChipsBeforeHand(seat) : 0;
+					}
+					WriteHand(endChips, "nextDeal");
+					OpenHand(thread, mySeat);
+				}
+
+				HandState& h = g_state.hand;
+				if (!h.open)
+					return;
+
+				// Last-seen engine state: hole cards (once dealt), each seat's
+				// fold/all-in state, and the board as far as it got.
+				for (std::uint32_t s = 0; s < kSeatCount; s++)
+				{
+					if (!h.occupied[s])
+						continue;
+					const ScriptLocal seat = SeatLocal(tableB, s);
+					if (seat.At(kSeatOccupiedField).AsInt32() == -1)
+						continue;
+					// The engine resets every seat to -1 between hands --
+					// keep the last in-hand state.
+					const std::int32_t seatState = seat.At(kSeatStateField).AsInt32();
+					if (inHand && seatState != -1)
+						h.lastState[s] = seatState;
+					std::int32_t* hole = &h.hole[static_cast<std::size_t>(s) * kHoleInts];
+					if (hole[0] < 2)
+					{
+						const std::int32_t r0 = HoleCardLocal(seat, 0).At(kCardRankField).AsInt32();
+						const std::int32_t r1 = HoleCardLocal(seat, 1).At(kCardRankField).AsInt32();
+						if (r0 >= 2 && r1 >= 2)
+						{
+							hole[0] = r0;
+							hole[1] = HoleCardLocal(seat, 0).At(kCardSuitField).AsInt32();
+							hole[2] = r1;
+							hole[3] = HoleCardLocal(seat, 1).At(kCardSuitField).AsInt32();
+						}
+					}
+				}
+				const std::int32_t reveal = BoardLocal(tableB).At(kBoardRevealCountField).AsInt32();
+				if (inHand && reveal >= h.realReveal && reveal <= kBoardCardCount)
+				{
+					h.realReveal = reveal;
+					for (std::int32_t i = 0; i < reveal; i++)
+					{
+						const ScriptLocal card = BoardCardLocal(tableB, static_cast<std::uint32_t>(i));
+						h.realBoard[static_cast<std::size_t>(i) * 2] = card.At(kCardRankField).AsInt32();
+						h.realBoard[static_cast<std::size_t>(i) * 2 + 1] = card.At(kCardSuitField).AsInt32();
+					}
+				}
+
+				if (!inHand)
+				{
+					g_state.pending = {};
+					return;
+				}
+
+				// Actions, from Table A -- the copy the AI decides from, updated
+				// whole per engine step, so a seat's action and the move of the
+				// turn to the next seat land in the same frame.
+				const std::int32_t acting = tableA.At(kTableActingSeatField).AsInt32();
+				const std::int32_t street = BoardLocal(tableA).At(kBoardRevealCountField).AsInt32();
+
+				// Your action landing: what you put in after the hints you saw.
+				if (g_state.lastActingSeat == mySeat && acting != mySeat && g_state.myHandTotalAtTurn >= 0)
+				{
+					const std::int32_t put = SeatLocal(tableA, static_cast<std::uint32_t>(mySeat)).At(kSeatHandTotalField).AsInt32() - g_state.myHandTotalAtTurn;
+					for (Hint& hint : g_state.hints)
+					{
+						if (hint.valid && hint.myPut < 0)
+							hint.myPut = put;
+					}
+					g_state.myHandTotalAtTurn = -1;
+				}
+				g_state.lastActingSeat = acting;
+
+				for (std::uint32_t s = 0; s < kSeatCount; s++)
+				{
+					if (static_cast<std::int32_t>(s) == mySeat)
+						continue;
+
+					const ScriptLocal seat = SeatLocal(tableA, s);
+					const std::int32_t state = seat.At(kSeatStateField).AsInt32();
+					const std::int32_t handTotal = seat.At(kSeatHandTotalField).AsInt32();
+					PendingAction& p = g_state.pending[s];
+
+					if (p.valid && (acting != static_cast<std::int32_t>(s) || state != 0 || handTotal != p.handTotalBefore))
+					{
+						const std::int32_t put = handTotal - p.handTotalBefore;
+						PokerAiOdds::Action played = PokerAiOdds::Action::Check;
+						if (state == PokerAiOdds::kSeatFolded)
+							played = PokerAiOdds::Action::Fold;
+						else if (put > p.owed)
+							played = PokerAiOdds::Action::Raise;
+						else if (put > 0)
+							played = PokerAiOdds::Action::Call;
+						WriteNpcAction(s, p, played, put, street);
+						p = PendingAction{};
+					}
+
+					if (!p.valid && acting == static_cast<std::int32_t>(s) && state == 0)
+					{
+						// A 0-chip seat (all-in by a raise; f_6 stays 0) is
+						// skipped by the game, not asked to decide -- the
+						// first recording logged those as phantom checks.
+						const AiInputs in = ReadAiInputs(thread, s);
+						if (in.valid && in.table.seats[s].stack > 0)
+						{
+							p.valid = true;
+							p.in = in;
+							p.odds = PokerAiOdds::Predict(in.table, static_cast<int>(s), in.equity, in.profile);
+							p.handTotalBefore = handTotal;
+							p.owed = in.table.callLevel - in.table.seats[s].streetBet;
+						}
+					}
+
+					// Your turn: remember the fold hint shown for this seat.
+					if (acting == mySeat && state == 0)
+					{
+						Hint& hint = g_state.hints[s];
+						hint.shown = g_shownHints[s];
+						hint.valid = hint.shown.kind != HintKind::None;
+						hint.myPut = -1;
+					}
+				}
+
+				if (acting == mySeat && mySeat >= 0 && mySeat < static_cast<std::int32_t>(kSeatCount))
+					g_state.myHandTotalAtTurn = SeatLocal(tableA, static_cast<std::uint32_t>(mySeat)).At(kSeatHandTotalField).AsInt32();
+			}
+		}
+#endif
 
 		void DrawOverlay()
 		{
@@ -1512,6 +2087,9 @@ namespace PokerCheat
 			// ComputeDenseRowForSeat()'s header comment.
 			int denseRowForSeat[kSeatCount];
 			ComputeDenseRowForSeat(thread, mySeat, denseRowForSeat);
+#ifdef _DEBUG
+			g_shownHints = {}; // refilled by the seat loop below
+#endif
 
 			for (std::uint32_t seat = 0; seat < kSeatCount; seat++)
 			{
@@ -1612,10 +2190,21 @@ namespace PokerCheat
 				const Config::Values& cfg = Config::Get();
 
 				// What this opponent would do if it acted now (Table A's
-				// f_7 == 0: nobody has bet, so a raise is a bet).
+				// f_7 == 0: nobody has bet, so a raise is a bet), and on your
+				// turn a bet hint picked by the verdict (ReadBetHint()).
 				std::string_view oddsText;
 				if (!isMe && isActive && cfg.ShowOpponentOdds)
-					oddsText = AiOddsText(ReadAiOdds(thread, seat), tableA.At(kTableCallField).AsInt32() == 0);
+				{
+					const AiInputs ai = ReadAiInputs(thread, seat);
+					const PokerAiOdds::Odds odds = ai.valid ? PokerAiOdds::Predict(ai.table, static_cast<int>(seat), ai.equity, ai.profile) : PokerAiOdds::Odds{};
+					const BetHint hint = ReadBetHint(thread, seat, ai, mySeat, vsMeResult);
+#ifdef _DEBUG
+					if (odds.valid)
+						g_shownHints[seat] = hint;
+#endif
+					oddsText = AiOddsText(odds, tableA.At(kTableCallField).AsInt32() == 0, hint.bet,
+						PromptHudLocal(thread).At(kChipValueField).AsInt32());
+				}
 
 #ifdef _DEBUG
 				// Your own seat is always shown in full -- that's your
@@ -1894,49 +2483,6 @@ namespace PokerCheat
 			return direction * steps;
 		}
 
-		// The bet/raise UI's limits, in chips on top of seat.f_4 --
-		// func_1614(table, settings, seat, ..., true): `min` is 0 (check)
-		// or the call, `minRaise` the smallest raise, `max` the most you
-		// can put in (your stack, the table cap, or just the call if you
-		// may not raise).
-		struct BetLimits
-		{
-			std::int32_t min = 0;
-			std::int32_t minRaise = 0;
-			std::int32_t max = -1;
-			std::int32_t stack = 0; // seat.f_2 -- max == stack is all-in (func_1252's MGPKR_UI_ALLIN check)
-		};
-
-		BetLimits BetInputLimits(rage::scrThread* thread)
-		{
-			const std::int32_t seat = MySeatLocal(thread).AsInt32();
-			if (seat < 0 || seat >= static_cast<std::int32_t>(kSeatCount))
-				return {};
-
-			const ScriptLocal table = TableALocal(thread);
-			const ScriptLocal seatLocal = SeatLocal(table, static_cast<std::uint32_t>(seat));
-			const ScriptLocal settings = SettingsLocal(thread);
-			const std::int32_t call = table.At(kTableCallField).AsInt32();
-			const std::int32_t streetBet = seatLocal.At(kSeatStreetBetField).AsInt32();
-
-			BetLimits limits;
-			limits.min = call;
-			limits.minRaise = (call == 0) ? table.At(kTableOpenBetField).AsInt32() : call + table.At(kTableRaiseField).AsInt32();
-			limits.stack = seatLocal.At(kSeatStackField).AsInt32();
-			limits.max = limits.stack + streetBet;
-
-			const std::int32_t cap = settings.At(kSettingsCapField).AsInt32();
-			if (settings.At(kSettingsLimitTypeField).AsInt32() == kCappedLimitType && cap > 0)
-				limits.max = (std::min)(limits.max, cap - seatLocal.At(kSeatHandTotalField).AsInt32() + streetBet);
-			if (seatLocal.At(kSeatCanRaiseField).AsInt32() == 0)
-				limits.max = (std::min)(limits.max, call);
-
-			limits.min = (std::min)(limits.min, limits.max) - streetBet;
-			limits.minRaise = (std::min)(limits.minRaise, limits.max) - streetBet;
-			limits.max -= streetBet;
-			return limits;
-		}
-
 		// func_1252's clamp: below the call -> the call; between the call
 		// and the minimum raise -> whichever of the two the move heads to.
 		std::int32_t ClampBet(const BetLimits& limits, std::int32_t wanted, std::int32_t delta)
@@ -1961,17 +2507,6 @@ namespace PokerCheat
 			AUDIO::_STOP_SOUND_WITH_NAME("BET_AMOUNT", "HUD_POKER");
 			AUDIO::PLAY_SOUND_FRONTEND(atLimit ? "BET_MIN_MAX" : "BET_AMOUNT", "HUD_POKER", true, 0);
 			Log::Write("BetHotkeys: {} set the amount {} -> {} chips{}", key, amount, value, written ? "" : " (write FAILED)");
-		}
-
-		// "$2.50" -- cents as dollars.
-		void AppendDollars(std::string& out, std::int32_t cents)
-		{
-			std::array<char, 12> digits{};
-			out.push_back('$');
-			out.append(digits.data(), std::to_chars(digits.data(), digits.data() + digits.size(), cents / 100).ptr);
-			out.push_back('.');
-			out.push_back(static_cast<char>('0' + (cents % 100) / 10));
-			out.push_back(static_cast<char>('0' + cents % 10));
 		}
 
 		// Puts the step on the game's own "Amount" prompt (MGPKR_UI_ALTER,
@@ -2110,6 +2645,10 @@ namespace PokerCheat
 			UpdateBetHotkeys(GamePointers::FindScriptThread(rage::Joaat("poker_sp")));
 		else
 			ResetBetHotkeys();
+
+#ifdef _DEBUG
+		HandRecorder::Update(GamePointers::FindScriptThread(rage::Joaat("poker_sp")));
+#endif
 
 		DrawOverlay();
 	}

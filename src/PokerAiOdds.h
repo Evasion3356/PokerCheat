@@ -21,8 +21,10 @@
 // No game dependency, so tests/PokerAiOddsTests.cpp links this same header
 // (same convention as PokerHandEval.h).
 
+#include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace PokerAiOdds
@@ -31,6 +33,8 @@ namespace PokerAiOdds
 
 	// Seat state (seat.f_6): -1 empty, 0 active, 1 folded, 2 all-in.
 	constexpr std::int32_t kSeatActive = 0;
+	constexpr std::int32_t kSeatFolded = 1;
+	constexpr std::int32_t kSeatAllIn = 2;
 
 	struct Seat
 	{
@@ -39,6 +43,8 @@ namespace PokerAiOdds
 		std::int32_t stack = 0;       // seat.f_2
 		std::int32_t streetBet = 0;   // seat.f_4
 		bool canRaise = true;         // seat.f_5
+
+		bool operator==(const Seat&) const = default;
 	};
 
 	// The table as the AI sees it: Table A (f_114.f_287), which is what
@@ -53,6 +59,8 @@ namespace PokerAiOdds
 		std::int32_t openBet = 0;     // f_10 -- the minimum bet when nobody bet yet
 		std::int32_t pot = 0;         // func_870: the pots (f_376) + every seat's street bet
 		std::array<Seat, kSeatCount> seats{};
+
+		bool operator==(const Table&) const = default;
 	};
 
 	// One personality's row of func_584's tables: f_9[p1] and f_13[p2].
@@ -60,6 +68,8 @@ namespace PokerAiOdds
 	{
 		float equityMultiplier = 1.0f;
 		std::array<float, 10> sizes{};
+
+		bool operator==(const Profile&) const = default;
 	};
 
 	enum class Action { None, Fold, Check, Call, Raise };
@@ -237,6 +247,55 @@ namespace PokerAiOdds
 		// Midpoints of an even grid over [0, 1), one per random draw.
 		constexpr int kGrid = 48;
 		inline float GridPoint(int i) { return (static_cast<float>(i) + 0.5f) / static_cast<float>(kGrid); }
+
+		// Everything func_1628 settles before its first threshold: the
+		// personality-scaled equity, position, and the chance of the
+		// "aggressive this decision" flag. valid == false: no prediction.
+		struct Inputs
+		{
+			bool valid = false;
+			float confidence = 0.0f;
+			float position = 0.0f;
+			float flagChance = 0.0f;
+		};
+
+		inline Inputs Prepare(const Table& table, int seat, float equity, const Profile& profile)
+		{
+			Inputs in;
+			if (!IsActive(table, seat) || table.seats[seat].stack <= 0 || table.stakesTier < 0 || table.stakesTier > 3)
+				return in;
+
+			const Seat& s = table.seats[seat];
+
+			// func_1708: equity * multiplier, clamped to [0, 1].
+			in.confidence = equity * profile.equityMultiplier;
+			if (in.confidence < 0.0f)
+				in.confidence = 0.0f;
+			if (in.confidence > 1.0f)
+				in.confidence = 1.0f;
+
+			in.position = Position(table, seat);
+			if (in.position < 0.0f)
+				return in;
+
+			float commitment = (static_cast<float>(s.stack) - static_cast<float>(table.callLevel)) / static_cast<float>(s.stack);
+			if (commitment < 0.0f)
+				commitment = 0.0f;
+
+			// flag = 0.7 * random(0, position) + 0.3 * random(0, commitment) > 0.6
+			int flagHits = 0;
+			for (int i = 0; i < kGrid; i++)
+			{
+				for (int j = 0; j < kGrid; j++)
+				{
+					if (GridPoint(i) * in.position * 0.7f + GridPoint(j) * commitment * 0.3f > 0.6f)
+						flagHits++;
+				}
+			}
+			in.flagChance = static_cast<float>(flagHits) / static_cast<float>(kGrid * kGrid);
+			in.valid = true;
+			return in;
+		}
 	}
 
 	// Odds for `seat` acting now, against the table as it stands. equity is
@@ -248,44 +307,16 @@ namespace PokerAiOdds
 		using namespace Detail;
 
 		Odds odds;
-		if (!IsActive(table, seat) || table.seats[seat].stack <= 0 || table.stakesTier < 0 || table.stakesTier > 3)
+		const Inputs in = Prepare(table, seat, equity, profile);
+		if (!in.valid)
 			return odds;
 
-		const Seat& s = table.seats[seat];
-
-		// func_1708: equity * multiplier, clamped to [0, 1].
-		float confidence = equity * profile.equityMultiplier;
-		if (confidence < 0.0f)
-			confidence = 0.0f;
-		if (confidence > 1.0f)
-			confidence = 1.0f;
-
-		const float position = Position(table, seat);
-		if (position < 0.0f)
-			return odds;
-
-		float commitment = (static_cast<float>(s.stack) - static_cast<float>(table.callLevel)) / static_cast<float>(s.stack);
-		if (commitment < 0.0f)
-			commitment = 0.0f;
-
-		// flag = 0.7 * random(0, position) + 0.3 * random(0, commitment) > 0.6
-		int flagHits = 0;
-		for (int i = 0; i < kGrid; i++)
-		{
-			for (int j = 0; j < kGrid; j++)
-			{
-				if (GridPoint(i) * position * 0.7f + GridPoint(j) * commitment * 0.3f > 0.6f)
-					flagHits++;
-			}
-		}
 		const float cells = static_cast<float>(kGrid * kGrid);
-		const float flagChance = static_cast<float>(flagHits) / cells;
-
 		float total = 0.0f;
 		for (int f = 0; f < 2; f++)
 		{
 			const bool flag = (f == 1);
-			const float weight = (flag ? flagChance : 1.0f - flagChance) / cells;
+			const float weight = (flag ? in.flagChance : 1.0f - in.flagChance) / cells;
 			if (weight <= 0.0f)
 				continue;
 
@@ -293,7 +324,7 @@ namespace PokerAiOdds
 			{
 				for (int j = 0; j < kGrid; j++)
 				{
-					switch (DecideGivenFlag(table, seat, confidence, position, flag, profile, GridPoint(i), GridPoint(j)))
+					switch (DecideGivenFlag(table, seat, in.confidence, in.position, flag, profile, GridPoint(i), GridPoint(j)))
 					{
 						case Action::Fold: odds.fold += weight; break;
 						case Action::Check: odds.check += weight; break;
@@ -315,5 +346,209 @@ namespace PokerAiOdds
 		odds.raise /= total;
 		odds.valid = true;
 		return odds;
+	}
+
+	// Chance `seat` folds if it acted now. Unlike Predict() this needs no
+	// grid over the aggression/bet-size rolls: func_1628 only folds from
+	// its two threshold tests, which run before either roll, so only the
+	// flag's chance matters. Negative: no prediction.
+	inline float FoldChance(const Table& table, int seat, float equity, const Profile& profile)
+	{
+		using namespace Detail;
+
+		const Inputs in = Prepare(table, seat, equity, profile);
+		if (!in.valid)
+			return -1.0f;
+
+		float fold = 0.0f;
+		if (DecideGivenFlag(table, seat, in.confidence, in.position, true, profile, 0.5f, 0.5f) == Action::Fold)
+			fold += in.flagChance;
+		if (DecideGivenFlag(table, seat, in.confidence, in.position, false, profile, 0.5f, 0.5f) == Action::Fold)
+			fold += 1.0f - in.flagChance;
+		return fold;
+	}
+
+	// The table after `me` raises by putting `bet` more chips in this
+	// street -- func_1104's raise case (poker_sp.ysc.c line ~39993). Going
+	// all-in does NOT make `me` all-in here: that case never touches
+	// seat.f_6, so the seat stays active (0) with a 0 stack until func_468
+	// marks all-in seats (2) once the betting round ends. It still counts
+	// in func_665's active count (the AI's cutoffs), just not in
+	// func_1710's "has chips" count. Assuming state 2 here once predicted a
+	// fold that the live game (Call 100%) didn't make.
+	inline Table WithBet(const Table& table, int me, std::int32_t bet)
+	{
+		Table after = table;
+		Seat& s = after.seats[me];
+		s.streetBet += bet;
+		s.stack -= bet;
+		if (s.stack < 0)
+			s.stack = 0;
+		after.pot += bet;
+
+		const std::int32_t raise = s.streetBet - after.callLevel;
+		if (raise <= 0)
+			return after;
+
+		after.callLevel = s.streetBet;
+		after.lastRaise = (after.lastRaise > raise) ? after.lastRaise : raise; // func_1552
+		for (int i = 0; i < kSeatCount; i++)
+		{
+			if (!after.seats[i].occupied)
+				continue;
+			if (i == me)
+				after.seats[i].canRaise = false;
+			else if (raise >= after.lastRaise)
+				after.seats[i].canRaise = after.seats[i].stack != 0;
+		}
+		return after;
+	}
+
+	// The same table with every active seat that acts after `me` and
+	// before `seat` (seats act in increasing order, see func_1709) folded.
+	inline Table WithSeatsBetweenFolded(const Table& table, int me, int seat)
+	{
+		Table after = table;
+		for (int walk = (me + 1) % kSeatCount; walk != seat && walk != me; walk = (walk + 1) % kSeatCount)
+		{
+			if (Detail::IsActive(after, walk))
+				after.seats[walk].state = kSeatFolded;
+		}
+		return after;
+	}
+
+	// A bet hint, as the chips `me` would enter in the bet box (on top of
+	// its street bet), and the fold chance it leaves -- see FindFoldBet()
+	// and FindValueBet().
+	struct FoldBet
+	{
+		bool found = false;
+		std::int32_t bet = 0;
+		float foldChance = 0.0f;
+	};
+
+	// Fold chance against `bet`, taking the worse of the seats between
+	// `me` and `seat` all staying in or all folding (folds change the
+	// active count, and with it the AI's cutoffs). Heads-up both are the
+	// same table.
+	inline float FoldChanceAgainstBet(const Table& table, int me, int seat, float equity, const Profile& profile, std::int32_t bet)
+	{
+		const Table after = WithBet(table, me, bet);
+		const float stay = FoldChance(after, seat, equity, profile);
+		const float fold = FoldChance(WithSeatsBetweenFolded(after, me, seat), seat, equity, profile);
+		return (stay < fold) ? stay : fold;
+	}
+
+	// Fold chance at an even spread of bets from minBet to maxBet, plus the
+	// bet where the owed amount reaches half the seat's stack exactly: the
+	// fold chance jumps there (func_1714) and otherwise only moves with the
+	// flag's chance, so the spread plus that bet catches every step.
+	struct BetScan
+	{
+		static constexpr std::int32_t kSteps = 32;
+		std::array<std::int32_t, kSteps + 2> bets{};
+		std::array<float, kSteps + 2> chances{};
+		std::size_t count = 0;
+	};
+
+	inline BetScan ScanBets(const Table& table, int me, int seat, float equity, const Profile& profile, std::int32_t minBet, std::int32_t maxBet)
+	{
+		BetScan scan;
+		const Seat& target = table.seats[seat];
+		const std::int32_t halfStackBet = target.streetBet + target.stack / 2 - table.seats[me].streetBet;
+		for (std::int32_t i = 0; i <= BetScan::kSteps; i++)
+			scan.bets[scan.count++] = minBet + static_cast<std::int32_t>((static_cast<std::int64_t>(maxBet - minBet) * i) / BetScan::kSteps);
+		if (halfStackBet > minBet && halfStackBet < maxBet)
+			scan.bets[scan.count++] = halfStackBet;
+		std::sort(scan.bets.begin(), scan.bets.begin() + static_cast<std::ptrdiff_t>(scan.count));
+		for (std::size_t i = 0; i < scan.count; i++)
+			scan.chances[i] = FoldChanceAgainstBet(table, me, seat, equity, profile, scan.bets[i]);
+		return scan;
+	}
+
+	// For a seat that beats you (or ties): the smallest bet that makes it
+	// fold -- a bluff. Keeps the smallest bet within half a percent of the
+	// best fold chance seen; not found if no bet folds it more often than
+	// it already would.
+	inline FoldBet FindFoldBet(const Table& table, int me, int seat, float equity, const Profile& profile, std::int32_t minBet, std::int32_t maxBet)
+	{
+		FoldBet result;
+		if (me == seat || minBet <= 0 || minBet > maxBet)
+			return result;
+
+		const float now = FoldChance(table, seat, equity, profile);
+		if (now < 0.0f || now >= 0.995f)
+			return result;
+
+		const BetScan scan = ScanBets(table, me, seat, equity, profile, minBet, maxBet);
+		float best = -1.0f;
+		for (std::size_t i = 0; i < scan.count; i++)
+			best = (scan.chances[i] > best) ? scan.chances[i] : best;
+		if (best < now + 0.01f)
+			return result;
+
+		for (std::size_t i = 0; i < scan.count; i++)
+		{
+			if (scan.chances[i] < best - 0.005f)
+				continue;
+
+			// Narrow the step before it down to the exact smallest bet.
+			std::int32_t low = (i == 0) ? scan.bets[0] : scan.bets[i - 1];
+			std::int32_t high = scan.bets[i];
+			while (low < high)
+			{
+				const std::int32_t mid = low + (high - low) / 2;
+				if (FoldChanceAgainstBet(table, me, seat, equity, profile, mid) >= best - 0.005f)
+					high = mid;
+				else
+					low = mid + 1;
+			}
+
+			result.found = true;
+			result.bet = high;
+			result.foldChance = FoldChanceAgainstBet(table, me, seat, equity, profile, high);
+			return result;
+		}
+		return result;
+	}
+
+	// For a seat you beat: the biggest bet it still won't fold to (under
+	// half a percent) -- as much as it will pay you. Not found if even the
+	// minimum raise risks a fold, or if it's out of the hand.
+	inline FoldBet FindValueBet(const Table& table, int me, int seat, float equity, const Profile& profile, std::int32_t minBet, std::int32_t maxBet)
+	{
+		FoldBet result;
+		if (me == seat || minBet <= 0 || minBet > maxBet || FoldChance(table, seat, equity, profile) < 0.0f)
+			return result;
+
+		constexpr float kSafe = 0.005f;
+		const BetScan scan = ScanBets(table, me, seat, equity, profile, minBet, maxBet);
+		if (scan.chances[0] < 0.0f || scan.chances[0] >= kSafe)
+			return result;
+
+		// The last safe bet of the leading safe run, then narrowed toward
+		// the next (unsafe) scanned bet.
+		std::size_t last = 0;
+		while (last + 1 < scan.count && scan.chances[last + 1] >= 0.0f && scan.chances[last + 1] < kSafe)
+			last++;
+		std::int32_t low = scan.bets[last];
+		if (last + 1 < scan.count)
+		{
+			std::int32_t high = scan.bets[last + 1] - 1;
+			while (low < high)
+			{
+				const std::int32_t mid = low + (high - low + 1) / 2;
+				const float chance = FoldChanceAgainstBet(table, me, seat, equity, profile, mid);
+				if (chance >= 0.0f && chance < kSafe)
+					low = mid;
+				else
+					high = mid - 1;
+			}
+		}
+
+		result.found = true;
+		result.bet = low;
+		result.foldChance = FoldChanceAgainstBet(table, me, seat, equity, profile, low);
+		return result;
 	}
 }

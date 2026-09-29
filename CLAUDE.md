@@ -143,6 +143,25 @@ unverified against real hands for 9 sessions previously (see
 `docs/JOURNAL.md`, Session 9) specifically because there was no
 automated check on it.
 
+**Recorded hands as tests.** The Debug build appends a JSONL hand log,
+`PokerCheat_hands.jsonl`, next to `PokerCheat.log` (rolls over at 4 MB to
+`.1.jsonl`). Each line is an `npcAction` (an opponent decision: the
+`PokerAiOdds` model's full input, its Fold/Check/Call/Raise odds, what the
+NPC really did and the chance the model gave that, plus the fold hint you
+had up and what you bet) or a `hand` (hole cards, board predicted at the
+deal vs. the real one, predicted showdown winners vs. who gained chips,
+per-hand npcAction tallies). Written at the next deal, or `"endedBy":
+"tableExit"` when the table closes. To pin a real decision as a regression
+test, copy its `npcAction` line into `tests/fixtures/hands.jsonl`:
+`PokerAiOddsTests` replays each one and requires the action the game
+really took to have a nonzero predicted chance. Format:
+`src/HandRecord.h`. Quick summaries: `jq -s` over the file, e.g. the share
+of npcAction lines with `pPlayed > 0`, or hand lines with `boardMatch` /
+`winnerMatch` false.
+
+Both builds enable the HUD on injection (no menu step after a reinject);
+Debug's F10 menu can still toggle it off/on.
+
 In-game: press F10 for the test menu (NUMPAD 8/2 move, NUMPAD 5 select,
 NUMPAD 0/Backspace/F10 back -- same controls as `CollectorOffline` and the
 ScriptHookRDR2 SDK's own NativeTrainer sample).
@@ -187,6 +206,12 @@ the INI you're testing with there is never overwritten.
   `CollectorOffline` (itself adapted from the ScriptHookRDR2 SDK's
   NativeTrainer sample); keyboard adds `IsKeyWithAlt()` and is built and
   hooked in Release too, for the bet hotkeys.
+- `src/PokerAiOdds.h` -- game-free port of poker_sp's AI decision engine
+  (odds + the fold-bet search), unit tested.
+- `src/HandRecord.h` -- the hand log's JSONL line writer/flat reader,
+  ported from DominoCheat's `GameRecord.h`; shared by the mod's Debug-only
+  `HandRecorder` (`PokerCheat.cpp`) and the fixture replay in
+  `tests/PokerAiOddsTests.cpp`.
 - `src/Log.h` -- minimal timestamped file logger (`PokerCheat.log`),
   backed by spdlog (`external/spdlog`, header-only) instead of a
   hand-rolled `fopen_s`/`vfprintf` pair -- see Coding Conventions above

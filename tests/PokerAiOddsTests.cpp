@@ -9,9 +9,13 @@
 // Exits 0 and prints "ALL PASS" if every case passes, 1 otherwise.
 
 #include "../src/PokerAiOdds.h"
+#include "../src/HandRecord.h"
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
 namespace
 {
@@ -78,6 +82,58 @@ namespace
 	bool SumsToOne(const Odds& odds)
 	{
 		return Near(odds.fold + odds.check + odds.call + odds.raise, 1.0f, 0.001f);
+	}
+
+	// Replays tests/fixtures/hands.jsonl -- npcAction lines copied out of
+	// the mod's PokerCheat_hands.jsonl (Debug build). The action the game
+	// really took must be one the model gives a nonzero chance. No file or
+	// no lines yet is fine.
+	void TestRecordedActions()
+	{
+		std::ifstream file;
+		for (const std::filesystem::path& path : {
+			std::filesystem::path(__FILE__).parent_path() / "fixtures" / "hands.jsonl",
+			std::filesystem::path("tests") / "fixtures" / "hands.jsonl",
+			std::filesystem::path("fixtures") / "hands.jsonl" })
+		{
+			file.open(path);
+			if (file.is_open())
+				break;
+		}
+		if (!file.is_open())
+		{
+			std::printf("  (no tests/fixtures/hands.jsonl -- skipping recorded actions)\n");
+			return;
+		}
+
+		int replayed = 0;
+		std::string line;
+		while (std::getline(file, line))
+		{
+			std::string type, played, id;
+			if (!HandRecord::GetString(line, "type", type) || type != "npcAction" || !HandRecord::GetString(line, "played", played))
+				continue;
+			HandRecord::GetString(line, "id", id);
+
+			Table table;
+			PokerAiOdds::Profile profile;
+			int seat = -1;
+			float equity = 0.0f;
+			const std::string name = "recorded " + id + " (" + played + ")";
+			if (!HandRecord::ReadAi(line, table, seat, equity, profile))
+			{
+				Check(false, (name + " parses").c_str());
+				continue;
+			}
+
+			const Odds odds = Predict(table, seat, equity, profile);
+			const float chance = HandRecord::ChanceOf(odds, HandRecord::ActionFromName(played));
+			if (chance <= 0.0f)
+				PrintOdds(odds);
+			Check(odds.valid && chance > 0.0f, (name + " was predicted possible").c_str());
+			replayed++;
+		}
+		std::printf("  %d recorded action(s) replayed\n", replayed);
 	}
 }
 
@@ -174,6 +230,108 @@ int main()
 		Check(a.valid && a.fold == b.fold && a.call == b.call && a.raise == b.raise && a.check == b.check, "same inputs -> identical odds");
 		Check(SumsToOne(a), "tier-1 odds sum to 1");
 	}
+
+	// FindFoldBet: you (seat 1, 300 chips, the dealer) to act with nobody
+	// having bet; the opponent (seat 0, 200 chips) acts next.
+	const auto yourTurn = []()
+	{
+		Table table = HeadsUp(3, 0);
+		table.seats[1].stack = 300;
+		return table;
+	};
+
+	// Equity 0.5 at position 0.5: score 0.5 either way, the low band. It
+	// folds exactly once it owes half its stack -- 100 chips.
+	{
+		PokerAiOdds::FoldBet fold = PokerAiOdds::FindFoldBet(yourTurn(), 1, 0, 0.5f, MakeProfile(0), 10, 300);
+		std::printf("        found=%d bet=%d fold=%.4f\n", fold.found ? 1 : 0, fold.bet, fold.foldChance);
+		Check(fold.found && fold.bet == 100 && Near(fold.foldChance, 1.0f), "low band -> folds from a bet of half its stack");
+	}
+
+	// Regression (live report: "Raise $22.07: Fold" -- all it had -- then
+	// Call 100% after the shove). Equity 0.9 * tight 0.8 = 0.72, the middle
+	// band, which never folds on bet size. An all-in raise leaves your seat
+	// ACTIVE with a 0 stack (func_1104 never sets f_6 = 2), so the active
+	// count and the cutoffs don't move either: no bet folds it.
+	{
+		PokerAiOdds::FoldBet fold = PokerAiOdds::FindFoldBet(yourTurn(), 1, 0, 0.9f, MakeProfile(2, 0.8f), 10, 300);
+		Check(!fold.found, "middle band -> not even an all-in folds it");
+
+		const Table shoved = PokerAiOdds::WithBet(yourTurn(), 1, 300);
+		Check(shoved.seats[1].state == 0 && shoved.seats[1].stack == 0 && shoved.callLevel == 300, "an all-in raise keeps your seat active with a 0 stack");
+		Odds odds = Predict(shoved, 0, 0.9f, MakeProfile(2, 0.8f));
+		PrintOdds(odds);
+		Check(odds.valid && Near(odds.call, 1.0f), "after the shove it calls 100%, as seen live");
+	}
+
+	// FindValueBet, for a seat you beat: the most it still won't fold to.
+	// Low band: safe up to 99, folds from 100 (half its 200 stack).
+	{
+		PokerAiOdds::FoldBet value = PokerAiOdds::FindValueBet(yourTurn(), 1, 0, 0.5f, MakeProfile(0), 10, 300);
+		std::printf("        found=%d bet=%d fold=%.4f\n", value.found ? 1 : 0, value.bet, value.foldChance);
+		Check(value.found && value.bet == 99 && Near(value.foldChance, 0.0f), "value bet -> the last bet under half its stack");
+
+		// Middle band: nothing folds it, so everything up to all-in is safe.
+		PokerAiOdds::FoldBet strong = PokerAiOdds::FindValueBet(yourTurn(), 1, 0, 0.9f, MakeProfile(2, 0.8f), 10, 300);
+		Check(strong.found && strong.bet == 300, "value bet vs. a strong hand -> all-in is safe");
+
+		// No equity: even the minimum bet folds it -- no value bet.
+		Check(!PokerAiOdds::FindValueBet(yourTurn(), 1, 0, 0.0f, MakeProfile(0), 10, 300).found, "value bet vs. nothing -> none");
+	}
+
+	// Equity 0.9 * loose 1.25 -> 1.0: not below even the all-in fold line,
+	// and the flag can't fire (it owes more than its stack, so the
+	// commitment term is 0 and 0.7 * 0.5 < 0.6) -- nothing folds it.
+	{
+		PokerAiOdds::FoldBet fold = PokerAiOdds::FindFoldBet(yourTurn(), 1, 0, 0.9f, MakeProfile(2, 1.25f), 10, 300);
+		Check(!fold.found, "maxed-out confidence -> no bet folds it");
+	}
+
+	// Three-way: you seat 0, seat 1 between, seat 2 the target (dealer =
+	// 2). If seat 1 folds first the active count drops and the cutoffs
+	// with it, so the hint must hold either way.
+	{
+		Table table = HeadsUp(3, 0);
+		table.dealer = 2;
+		for (int seat = 0; seat < 3; seat++)
+		{
+			table.seats[seat].occupied = true;
+			table.seats[seat].state = 0;
+			table.seats[seat].stack = 200;
+		}
+		const float between = PokerAiOdds::FoldChance(PokerAiOdds::WithSeatsBetweenFolded(table, 0, 2), 2, 0.3f, MakeProfile(0));
+		Check(PokerAiOdds::WithSeatsBetweenFolded(table, 0, 2).seats[1].state == PokerAiOdds::kSeatFolded && between >= 0.0f, "seats between you and the target are folded in the worst case");
+
+		PokerAiOdds::FoldBet fold = PokerAiOdds::FindFoldBet(table, 0, 2, 0.5f, MakeProfile(0), 10, 200);
+		std::printf("        found=%d bet=%d fold=%.4f\n", fold.found ? 1 : 0, fold.bet, fold.foldChance);
+		Check(!fold.found || PokerAiOdds::FoldChanceAgainstBet(table, 0, 2, 0.5f, MakeProfile(0), fold.bet) == fold.foldChance, "three-way hint uses the worst case");
+	}
+
+	// HandRecord round trip: an npcAction line reads back to the exact
+	// same model input, floats included.
+	{
+		Table table = HeadsUp(2, 20);
+		table.seats[1].streetBet = 20;
+		table.pot = 137;
+		const PokerAiOdds::Profile profile = MakeProfile(1, 1.25f);
+		const float equity = 0.61803398f;
+
+		HandRecord::JsonLine line;
+		line.Add("type", "npcAction");
+		HandRecord::WriteAi(line, table, 0, equity, profile);
+		line.Add("played", HandRecord::ActionName(PokerAiOdds::Action::Call));
+		const std::string text = line.Str();
+
+		Table readTable;
+		PokerAiOdds::Profile readProfile;
+		int readSeat = -1;
+		float readEquity = 0.0f;
+		std::string played;
+		Check(HandRecord::ReadAi(text, readTable, readSeat, readEquity, readProfile) && readTable == table && readProfile == profile &&
+			readSeat == 0 && readEquity == equity && HandRecord::GetString(text, "played", played) && played == "call", "hand record round trip is exact");
+	}
+
+	TestRecordedActions();
 
 	if (g_failures == 0)
 	{
