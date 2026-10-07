@@ -1,7 +1,7 @@
 #include "Localization.h"
 #include "Config.h"
 #include "Log.h"
-#include "script.h" // LANGUAGE::_GET_CURRENT_LANGUAGE_ID() (natives.h, via script.h)
+#include "script.h" // LOCALIZATION::GET_CURRENT_LANGUAGE() (natives.h, via script.h)
 
 #include <string>
 #include <string_view>
@@ -69,7 +69,7 @@ namespace
 	// PokerCheat.ini's [General] Language override -- "auto" (the
 	// default) defers to the game's own current UI language; anything
 	// else must match one of these exact codes, the same ones
-	// LANGUAGE::_GET_CURRENT_LANGUAGE_ID()'s own return-value mapping
+	// LOCALIZATION::GET_CURRENT_LANGUAGE()'s own return-value mapping
 	// uses (confirmed against rdr3-nativedb-data/natives.json's comment
 	// on native hash 0xDB917DA5C6835FCC). Unrecognized text (a typo, or
 	// "auto" itself) falls back to English via Refresh()'s caller.
@@ -108,7 +108,7 @@ namespace Localization
 			// Covers "auto" (the documented default) and any typo'd
 			// override alike -- both should fall back to the game's own
 			// current language rather than silently forcing English.
-			std::int32_t raw = LANGUAGE::_GET_CURRENT_LANGUAGE_ID();
+			std::int32_t raw = LOCALIZATION::GET_CURRENT_LANGUAGE();
 			g_current = ClampLanguage(raw);
 		}
 

@@ -9,7 +9,7 @@
 	user -- and stays English-only; not worth translating.
 
 	Language is auto-detected from the game's own current UI language via
-	LANGUAGE::_GET_CURRENT_LANGUAGE_ID() (see Localization.cpp), so a
+	LOCALIZATION::GET_CURRENT_LANGUAGE() (see Localization.cpp), so a
 	player sees this mod's HUD in whatever language they already have
 	RDR2 itself set to, with no config needed. PokerCheat.ini's [General]
 	Language key can override that per Config.h's header comment on
@@ -30,7 +30,7 @@
 
 namespace Localization
 {
-	// Matches LANGUAGE::_GET_CURRENT_LANGUAGE_ID()'s own return value
+	// Matches LOCALIZATION::GET_CURRENT_LANGUAGE()'s own return value
 	// mapping exactly (confirmed against rdr3-nativedb-data/natives.json's
 	// comment on native hash 0xDB917DA5C6835FCC) -- these are the 13
 	// languages RDR2 itself ships with, not an arbitrary list.
@@ -59,7 +59,7 @@ namespace Localization
 	// MUST be called from within ScriptHookRDR2's script fiber (i.e.
 	// from OnTick() or a menu action running inside ScriptMain's loop),
 	// never from DllMain -- unlike Config::Reload(), this calls a real
-	// game native (LANGUAGE::_GET_CURRENT_LANGUAGE_ID()) and natives
+	// game native (LOCALIZATION::GET_CURRENT_LANGUAGE()) and natives
 	// aren't safe to invoke outside the registered script thread's own
 	// cooperative fiber. Current() below lazily calls this on first use
 	// instead, the same "g_loaded" pattern Config::Get() already uses,

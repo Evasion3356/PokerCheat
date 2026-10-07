@@ -252,7 +252,7 @@ public:
 		// doesn't care about constness, it's a pass-by-value template, so
 		// const_cast here is safe (the native never writes through the
 		// pointer).
-		AUDIO::STOP_SOUND_FRONTEND(const_cast<char*>("NAV_RIGHT"), const_cast<char*>("HUD_SHOP_SOUNDSET"));
+		AUDIO::_STOP_SOUND_WITH_NAME("NAV_RIGHT", "HUD_SHOP_SOUNDSET");
 		AUDIO::PLAY_SOUND_FRONTEND(const_cast<char*>("NAV_RIGHT"), const_cast<char*>("HUD_SHOP_SOUNDSET"), 1, 0);
 	}
 };

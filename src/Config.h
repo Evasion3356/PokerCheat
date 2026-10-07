@@ -51,7 +51,7 @@ namespace Config
 		// Overrides which language the HUD's opponent personality/
 		// verdict labels show in (see Localization.h/.cpp) -- "auto"
 		// (the default) matches the game's own current UI language
-		// automatically via LANGUAGE::_GET_CURRENT_LANGUAGE_ID(), no
+		// automatically via LOCALIZATION::GET_CURRENT_LANGUAGE(), no
 		// setup needed. Set to one of en-US/fr-FR/de-DE/it-IT/es-ES/
 		// pt-BR/pl-PL/ru-RU/ko-KR/zh-TW/ja-JP/es-MX/zh-CN (the exact
 		// codes that native itself maps to) to force a specific

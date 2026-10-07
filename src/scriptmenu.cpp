@@ -17,7 +17,7 @@
 
 void DrawTextAt(float x, float y, const char *str)
 {
-	UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(str)), x, y);
+	HUD::_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(str)), x, y);
 }
 
 void DrawRect(float lineLeft, float lineTop, float lineWidth, float lineHeight, int r, int g, int b, int a)
@@ -49,10 +49,10 @@ void MenuItemBase::OnDraw(float lineTop, float lineLeft, bool active)
 {
 	// text
 	ColorRgba color = active ? m_colorTextActive : m_colorText;
-	UI::SET_TEXT_SCALE(0.0, m_lineHeight * 8.0f);
-	UI::SET_TEXT_COLOR_RGBA(color.r, color.g, color.b, color.a);
-	UI::SET_TEXT_CENTRE(0);
-	UI::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
+	HUD::SET_TEXT_SCALE(0.0, m_lineHeight * 8.0f);
+	HUD::_SET_TEXT_COLOR(color.r, color.g, color.b, color.a);
+	HUD::SET_TEXT_CENTRE(0);
+	HUD::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
 	DrawTextAt(lineLeft + m_textLeft, lineTop + m_lineHeight / 4.5f, GetCaption().c_str());
 	// rect
 	color = active ? m_colorRectActive : m_colorRect;
@@ -65,10 +65,10 @@ void MenuItemSwitchable::OnDraw(float lineTop, float lineLeft, bool active)
 	float lineWidth = GetLineWidth();
 	float lineHeight = GetLineHeight();
 	ColorRgba color = active ? GetColorTextActive() : GetColorText();
-	UI::SET_TEXT_SCALE(0.0, lineHeight * 8.0f);
-	UI::SET_TEXT_COLOR_RGBA(color.r, color.g, color.b, static_cast<int>(color.a / 1.1f));
-	UI::SET_TEXT_CENTRE(0);
-	UI::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
+	HUD::SET_TEXT_SCALE(0.0, lineHeight * 8.0f);
+	HUD::_SET_TEXT_COLOR(color.r, color.g, color.b, static_cast<int>(color.a / 1.1f));
+	HUD::SET_TEXT_CENTRE(0);
+	HUD::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
 	DrawTextAt(lineLeft + lineWidth - lineWidth / 6.35f, lineTop + lineHeight / 4.8f, GetState() ? "[Y]" : "[N]");
 }
 
@@ -78,10 +78,10 @@ void MenuItemMenu::OnDraw(float lineTop, float lineLeft, bool active)
 	float lineWidth = GetLineWidth();
 	float lineHeight = GetLineHeight();
 	ColorRgba color = active ? GetColorTextActive() : GetColorText();
-	UI::SET_TEXT_SCALE(0.0, lineHeight * 8.0f);
-	UI::SET_TEXT_COLOR_RGBA(color.r, color.g, color.b, color.a / 2);
-	UI::SET_TEXT_CENTRE(0);
-	UI::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
+	HUD::SET_TEXT_SCALE(0.0, lineHeight * 8.0f);
+	HUD::_SET_TEXT_COLOR(color.r, color.g, color.b, color.a / 2);
+	HUD::SET_TEXT_CENTRE(0);
+	HUD::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
 	DrawTextAt(lineLeft + lineWidth - lineWidth / 8, lineTop + lineHeight / 3.5f, "*");
 }
 
@@ -174,10 +174,10 @@ void MenuController::DrawStatusText()
 {
 	if (GetTickCount() < m_statusTextMaxTicks)
 	{
-		UI::SET_TEXT_SCALE(0.55, 0.55);
-		UI::SET_TEXT_COLOR_RGBA(255, 255, 255, 255);
-		UI::SET_TEXT_CENTRE(1);
-		UI::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
+		HUD::SET_TEXT_SCALE(0.55, 0.55);
+		HUD::_SET_TEXT_COLOR(255, 255, 255, 255);
+		HUD::SET_TEXT_CENTRE(1);
+		HUD::SET_TEXT_DROPSHADOW(0, 0, 0, 0, 0);
 		DrawTextAt(0.5, 0.5, m_statusText.c_str());
 	}
 }

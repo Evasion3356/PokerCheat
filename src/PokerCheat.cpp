@@ -620,7 +620,7 @@ namespace PokerCheat
 		{
 			for (const std::string_view dict : kCardSetDicts)
 			{
-				if (TEXTURE::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(dict.data())))
+				if (TXD::HAS_STREAMED_TEXTURE_DICT_LOADED(const_cast<char*>(dict.data())))
 					return dict;
 			}
 
@@ -808,7 +808,7 @@ namespace PokerCheat
 			// in a REAL RDR2 font -- $Font5 ("Redemption"), confirmed
 			// working by the user via the now-removed DrawFontTest() F10
 			// diagnostic (see docs/JOURNAL.md for the full derivation: the
-			// plain UI::DRAW_TEXT/SET_TEXT_COLOR_RGBA natives this file
+			// plain HUD::_DISPLAY_TEXT/_SET_TEXT_COLOR natives this file
 			// uses everywhere else turned out to be nullsub on our build,
 			// UIDEBUG::_BG_DISPLAY_TEXT/_BG_SET_TEXT_COLOR -- added to
 			// ExtraNatives.h -- is the working replacement, and rich text
@@ -845,7 +845,7 @@ namespace PokerCheat
 					showVsMe ? vsLabel : std::string_view() });
 
 				UIDEBUG::_BG_SET_TEXT_COLOR(labelR, labelG, labelB, 255);
-				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), labelX, labelY);
+				UIDEBUG::_BG_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), labelX, labelY);
 			}
 		}
 
@@ -899,7 +899,7 @@ namespace PokerCheat
 			const char* formatText = BgFormatText(40, { label });
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
-			UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), winPredictionX, winPredictionY);
+			UIDEBUG::_BG_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText)), winPredictionX, winPredictionY);
 		}
 
 #ifdef _DEBUG
@@ -910,7 +910,7 @@ namespace PokerCheat
 		// driven through UISTATEMACHINE::/DATABINDING:: (a Scaleform-style
 		// UI-flow system, confirmed via _UIFLOWBLOCK_REQUEST/
 		// _DATABINDING_ADD_DATA_STRING calls elsewhere in the decompile)
-		// rather than raw UI::DRAW_TEXT calls, this is strong evidence
+		// rather than raw HUD::_DISPLAY_TEXT calls, this is strong evidence
 		// RDR2's simple legacy text-draw path only ever has one fixed
 		// font -- matching the real in-game font exactly isn't achievable
 		// this way without reimplementing that whole UI-flow system,
@@ -931,14 +931,14 @@ namespace PokerCheat
 		{
 			const Config::Values& cfg = Config::Get();
 			float textScale = title ? cfg.TitleTextScale : cfg.TextScale;
-			UI::SET_TEXT_SCALE(0.0f, textScale);
+			HUD::SET_TEXT_SCALE(0.0f, textScale);
 			if (title)
-				UI::SET_TEXT_COLOR_RGBA(kTitleR, kTitleG, kTitleB, kTitleA);
+				HUD::_SET_TEXT_COLOR(kTitleR, kTitleG, kTitleB, kTitleA);
 			else
-				UI::SET_TEXT_COLOR_RGBA(kTextR, kTextG, kTextB, kTextA);
-			UI::SET_TEXT_CENTRE(0);
-			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
-			UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(text)), x, y);
+				HUD::_SET_TEXT_COLOR(kTextR, kTextG, kTextB, kTextA);
+			HUD::SET_TEXT_CENTRE(0);
+			HUD::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+			HUD::_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(text)), x, y);
 		}
 
 		// Solid backing panel, same convention scriptmenu.cpp's own
@@ -997,21 +997,21 @@ namespace PokerCheat
 				GRAPHICS::DRAW_RECT(0.5f, y, 1.0f, kLineThickness, kGridR, kGridG, kGridB, kGridA, 0, 0);
 			}
 
-			UI::SET_TEXT_SCALE(0.0f, 0.25f);
-			UI::SET_TEXT_COLOR_RGBA(255, 255, 0, 255);
-			UI::SET_TEXT_CENTRE(0);
-			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+			HUD::SET_TEXT_SCALE(0.0f, 0.25f);
+			HUD::_SET_TEXT_COLOR(255, 255, 0, 255);
+			HUD::SET_TEXT_CENTRE(0);
+			HUD::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
 			for (int i = 0; i <= 10; i++)
 			{
 				float x = i * 0.1f;
 				std::string label = FormatFixed1(x);
-				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), x, 0.008f);
+				HUD::_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), x, 0.008f);
 			}
 			for (int i = 0; i <= 10; i++)
 			{
 				float y = i * 0.1f;
 				std::string label = FormatFixed1(y);
-				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), 0.008f, y);
+				HUD::_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), 0.008f, y);
 			}
 		}
 
@@ -1065,32 +1065,32 @@ namespace PokerCheat
 				kFontTestPanelWidth + kFontTestPanelPadding * 2.0f,
 				static_cast<float>(kRowCount + 1) * kFontTestLineHeight + kFontTestPanelPadding * 2.0f);
 
-			UI::SET_TEXT_SCALE(0.0f, 0.28f);
-			UI::SET_TEXT_COLOR_RGBA(kTitleR, kTitleG, kTitleB, kTitleA);
-			UI::SET_TEXT_CENTRE(0);
-			UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+			HUD::SET_TEXT_SCALE(0.0f, 0.28f);
+			HUD::_SET_TEXT_COLOR(kTitleR, kTitleG, kTitleB, kTitleA);
+			HUD::SET_TEXT_CENTRE(0);
+			HUD::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
 			std::string title = "Font Test " + std::to_string(FontTestLanguageIndex + 1) + "/" + std::to_string(static_cast<int>(Localization::Language::Count))
 				+ " (" + std::string(Localization::LanguageCode(lang)) + ") -- which rows below show real characters, not boxes?";
-			UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(title.c_str())), kFontTestX, kFontTestY);
+			HUD::_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(title.c_str())), kFontTestX, kFontTestY);
 
 			float y = kFontTestY + kFontTestLineHeight;
 			for (int i = 0; i < kRowCount; i++)
 			{
-				UI::SET_TEXT_SCALE(0.0f, 0.26f);
-				UI::SET_TEXT_COLOR_RGBA(kTextR, kTextG, kTextB, kTextA);
-				UI::SET_TEXT_CENTRE(0);
-				UI::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
+				HUD::SET_TEXT_SCALE(0.0f, 0.26f);
+				HUD::_SET_TEXT_COLOR(kTextR, kTextG, kTextB, kTextA);
+				HUD::SET_TEXT_CENTRE(0);
+				HUD::SET_TEXT_DROPSHADOW(1, 0, 0, 0, 200);
 				std::string label = std::string(kFaceTokens[i]) + ":";
-				UI::DRAW_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), kFontTestX, y);
+				HUD::_DISPLAY_TEXT(MISC::VAR_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(label.c_str())), kFontTestX, y);
 
-				// New (UIDEBUG) pipeline only -- the old UI::DRAW_TEXT/
+				// New (UIDEBUG) pipeline only -- the old HUD::_DISPLAY_TEXT/
 				// SET_TEXT_COLOR_RGBA pair was already confirmed nullsub
 				// on this build back in Session 11 (see ExtraNatives.h),
 				// no reason to re-test it here.
 				std::string formatText = "<TEXTFORMAT RIGHTMARGIN='0'><P ALIGN='Left'><FONT FACE='" + std::string(kFaceTokens[i]) + "' LETTERSPACING='0' SIZE='30'>~s~" + sampleText + "</FONT></P><TEXTFORMAT>";
 
 				UIDEBUG::_BG_SET_TEXT_COLOR(140, 220, 255, 255);
-				UIDEBUG::_BG_DISPLAY_TEXT(GAMEPLAY::CREATE_STRING(10, const_cast<char*>("LITERAL_STRING"), const_cast<char*>(formatText.c_str())), kFontTestX + kFontTestLabelWidth, y);
+				UIDEBUG::_BG_DISPLAY_TEXT(MISC::VAR_STRING(10, "LITERAL_STRING", formatText.c_str()), kFontTestX + kFontTestLabelWidth, y);
 
 				y += kFontTestLineHeight;
 			}
@@ -1978,7 +1978,7 @@ namespace PokerCheat
 			{
 				cardSetDict = FindLoadedCardSetDict();
 				if (cardSetDict.empty())
-					TEXTURE::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
+					TXD::REQUEST_STREAMED_TEXTURE_DICT(const_cast<char*>("card_set_1"), false);
 			}
 
 			// PREDICTION-VS-REALITY CHECK: two back-to-back "predicted win,
