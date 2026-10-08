@@ -174,10 +174,10 @@ namespace PokerCheat::Config
 	// One user-facing option, for a host that builds its own menu rows from
 	// them (Rampagio) instead of reading the INI. `id` is stable: hosts save
 	// the value under it, so never rename one. `value` points into Mutable()
-	// (a bool* or float*, per `kind`); a host writes it directly.
+	// (a bool*, int* or float*, per `kind`); a host writes it directly.
 	struct Option
 	{
-		enum class Kind { Bool, Float };
+		enum class Kind { Bool, Int, Float };
 		const char* id;
 		const char* section; // groups rows; Debug-only layout tuning is "HUD Layout"
 		const char* label;
