@@ -1,11 +1,13 @@
 #include "Localization.h"
 #include "Config.h"
-#include "Log.h"
+#include "PokerCheatLog.h"
 #include "script.h" // LOCALIZATION::GET_CURRENT_LANGUAGE() (natives.h, via script.h)
 
 #include <string>
 #include <string_view>
 
+namespace PokerCheat
+{
 namespace
 {
 	constexpr int kLanguageCount = static_cast<int>(Localization::Language::Count);
@@ -166,3 +168,4 @@ namespace Localization
 		}
 	}
 }
+} // namespace PokerCheat

@@ -35,9 +35,10 @@
 
 #pragma once
 
+#include <span>
 #include <string>
 
-namespace Config
+namespace PokerCheat::Config
 {
 	struct Values
 	{
@@ -166,12 +167,35 @@ namespace Config
 #endif
 	};
 
-	// Returns the current config, triggering the very first load
-	// automatically on first call (blocking, like any ordinary function
-	// call -- see Reload()).
+	// The current values. The ASI calls Reload() at startup before the
+	// first Get(); a host without the INI fills them through Mutable().
 	const Values& Get();
 
-	// Re-reads PokerCheat.ini from disk, replacing the cached values.
+	// One user-facing option, for a host that builds its own menu rows from
+	// them (Rampagio) instead of reading the INI. `id` is stable: hosts save
+	// the value under it, so never rename one. `value` points into Mutable()
+	// (a bool* or float*, per `kind`); a host writes it directly.
+	struct Option
+	{
+		enum class Kind { Bool, Float };
+		const char* id;
+		const char* section; // groups rows; Debug-only layout tuning is "HUD Layout"
+		const char* label;
+		const char* description;
+		Kind kind;
+		void* value;
+		float min = 0.0f;
+		float max = 0.0f;
+		float step = 0.0f;
+	};
+
+	// The values the library reads. The ASI's Reload() fills them from the
+	// INI; a host without one writes them through Mutable() or Options().
+	Values& Mutable();
+	std::span<const Option> Options();
+
+	// ASI only (Config.cpp, not part of the library): re-reads
+	// PokerCheat.ini from disk into Mutable().
 	// Wired to the F10 menu's "Reload Config" item; also called once,
 	// eagerly, from DllMain (see main.cpp) so the file exists as soon as
 	// the ASI is injected.

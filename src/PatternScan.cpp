@@ -5,6 +5,8 @@
 #include <string>
 #include <cstring>
 
+namespace PokerCheat
+{
 namespace
 {
 	struct ParsedPattern
@@ -145,3 +147,4 @@ namespace PatternScan
 		return operandAddr + sizeof(std::int32_t) + displacement;
 	}
 }
+} // namespace PokerCheat

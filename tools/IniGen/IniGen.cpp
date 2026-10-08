@@ -15,6 +15,6 @@
 
 int main()
 {
-	Config::Reload();
+	PokerCheat::Config::Reload();
 	return 0;
 }

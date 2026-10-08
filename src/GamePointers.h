@@ -15,7 +15,7 @@
 
 #include <string>
 
-namespace GamePointers
+namespace PokerCheat::GamePointers
 {
 	// Lazily resolves and caches the address of RDR2.exe's live script
 	// thread pool, via the same AOB signature HorseMenu uses (its

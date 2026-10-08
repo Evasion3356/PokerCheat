@@ -15,10 +15,13 @@
 
 #include "scriptmenu.h" // pulls in script.h (natives/types/enums/main) and keyboard.h
 #include "Log.h"
+#include "PokerCheatLog.h"
 #include "PokerCheat.h"
 #include "Config.h"
 #include "Localization.h"
 #include "GamePointers.h"
+
+namespace Config = PokerCheat::Config;
 
 namespace
 {
@@ -28,7 +31,7 @@ namespace
 
 	// Re-picks the active HUD language immediately after an ini edit,
 	// same live-tuning workflow as every other Config-backed value here
-	// -- Localization::Refresh() itself can't just be called from
+	// -- PokerCheat::Localization::Refresh() itself can't just be called from
 	// Config::Reload() directly (see Localization.h's header comment):
 	// it invokes a real game native, so it must run from inside
 	// ScriptHookRDR2's script fiber, same as this menu action already
@@ -36,7 +39,7 @@ namespace
 	void ReloadConfigAndLocalization()
 	{
 		Config::Reload();
-		Localization::Refresh();
+		PokerCheat::Localization::Refresh();
 	}
 
 	void BuildMenu()
@@ -59,11 +62,12 @@ namespace
 
 void ScriptMain()
 {
+	PokerCheat::Log::SetSink([](std::string_view line) { Log::Write("{}", line); });
 	Log::Write("PokerCheat started");
 
 	// Startup work that used to live in DllMain -- see main.cpp for why.
 	Config::Reload();
-	GamePointers::GetScriptThreads();
+	PokerCheat::GamePointers::GetScriptThreads();
 
 	// Both builds start already polling; Debug's F10 menu can still toggle
 	// it. SetEnabled(true), not Toggle() -- idempotent against ScriptMain

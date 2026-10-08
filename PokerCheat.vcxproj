@@ -22,11 +22,7 @@
     <ClCompile Include="src\scriptmenu.cpp">
       <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|x64'">true</ExcludedFromBuild>
     </ClCompile>
-    <ClCompile Include="src\PokerCheat.cpp" />
-    <ClCompile Include="src\PatternScan.cpp" />
-    <ClCompile Include="src\GamePointers.cpp" />
     <ClCompile Include="src\Config.cpp" />
-    <ClCompile Include="src\Localization.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="external\ScriptHookSDK\inc\main.h" />
@@ -37,12 +33,9 @@
     <ClInclude Include="src\script.h" />
     <ClInclude Include="src\scriptmenu.h" />
     <ClInclude Include="src\Log.h" />
-    <ClInclude Include="src\ExtraNatives.h" />
+    <ClInclude Include="src\PokerCheatLog.h" />
     <ClInclude Include="src\PokerCheat.h" />
-    <ClInclude Include="src\PatternScan.h" />
     <ClInclude Include="src\GamePointers.h" />
-    <ClInclude Include="src\ScriptLocal.h" />
-    <ClInclude Include="src\ScriptGlobal.h" />
     <ClInclude Include="src\Config.h" />
     <ClInclude Include="src\Localization.h" />
     <ClInclude Include="external\RDR-Classes\script\scrThread.hpp" />
@@ -54,6 +47,12 @@
     <ClInclude Include="external\inipp\inipp\inipp.h" />
     <ClInclude Include="external\spdlog\include\spdlog\spdlog.h" />
     <ClInclude Include="external\spdlog\include\spdlog\sinks\basic_file_sink.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The advisor itself; Rampagio links the same library. -->
+    <ProjectReference Include="PokerCheatLib.vcxproj">
+      <Project>{9A1D4C7E-2B58-4F03-8E6A-B3C9D1F05A72}</Project>
+    </ProjectReference>
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <ProjectGuid>{07307CD6-7B32-4222-8D75-26E935AB20DB}</ProjectGuid>

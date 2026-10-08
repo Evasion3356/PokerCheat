@@ -1,6 +1,6 @@
 #include "GamePointers.h"
 #include "PatternScan.h"
-#include "Log.h"
+#include "PokerCheatLog.h"
 
 #include <windows.h>
 
@@ -10,6 +10,8 @@
 #include <cstring>
 #include <cmath>
 
+namespace PokerCheat
+{
 namespace
 {
 	// HorseMenu's "ScriptThreads&RunScriptThreads" signature -- see
@@ -172,3 +174,4 @@ namespace GamePointers
 		return DumpLocalStackJsonl(thread, 0, thread->m_Context.m_StackSize, outPath);
 	}
 }
+} // namespace PokerCheat

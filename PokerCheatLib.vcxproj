@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The poker advisor (hand reads, deck-ahead prediction, AI odds, HUD, bet
+  hotkeys) as a static library, with no DllMain, menu, INI or log file of
+  its own. Linked by PokerCheat.vcxproj (the standalone ASI) and by Rampagio,
+  which pulls this repo in as a submodule and builds its option rows from
+  Config::Options().
+
+  The host provides: logging (src/PokerCheatLog.h sink), the option values
+  (Config::Mutable; the ASI's Config.cpp reads the INI into it), keyboard
+  state (keyboard.h's IsKeyDown/IsKeyJustUp/IsKeyWithAlt, defined by the
+  host's own keyboard.cpp) and ScriptHookRDR2.lib. Calls natives through
+  external/ScriptHookSDK's headers. Script thread only.
+-->
+<Project DefaultTargets="Build" ToolsVersion="12.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup Label="ProjectConfigurations">
+    <ProjectConfiguration Include="Release|x64">
+      <Configuration>Release</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+    <ProjectConfiguration Include="Debug|x64">
+      <Configuration>Debug</Configuration>
+      <Platform>x64</Platform>
+    </ProjectConfiguration>
+  </ItemGroup>
+  <ItemGroup>
+    <ClCompile Include="src\PokerCheat.cpp" />
+    <ClCompile Include="src\PokerCheatConfig.cpp" />
+    <ClCompile Include="src\PokerCheatLog.cpp" />
+    <ClCompile Include="src\GamePointers.cpp" />
+    <ClCompile Include="src\Localization.cpp" />
+    <ClCompile Include="src\PatternScan.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\PokerCheat.h" />
+    <ClInclude Include="src\PokerCheatLog.h" />
+    <ClInclude Include="src\Config.h" />
+    <ClInclude Include="src\ExtraNatives.h" />
+    <ClInclude Include="src\GamePointers.h" />
+    <ClInclude Include="src\HandRecord.h" />
+    <ClInclude Include="src\Localization.h" />
+    <ClInclude Include="src\PatternScan.h" />
+    <ClInclude Include="src\PokerAiOdds.h" />
+    <ClInclude Include="src\PokerHandEval.h" />
+    <ClInclude Include="src\ScriptGlobal.h" />
+    <ClInclude Include="src\ScriptLocal.h" />
+  </ItemGroup>
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{9A1D4C7E-2B58-4F03-8E6A-B3C9D1F05A72}</ProjectGuid>
+    <Keyword>Win32Proj</Keyword>
+    <RootNamespace>PokerCheatLib</RootNamespace>
+    <ProjectName>PokerCheatLib</ProjectName>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>false</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
+    <ConfigurationType>StaticLibrary</ConfigurationType>
+    <UseDebugLibraries>true</UseDebugLibraries>
+    <PlatformToolset>v145</PlatformToolset>
+    <WholeProgramOptimization>false</WholeProgramOptimization>
+    <CharacterSet>MultiByte</CharacterSet>
+    <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
+  </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
+  <PropertyGroup>
+    <!-- Outputs stay inside this repo (bin/ and tmp/ are gitignored), also
+         when a parent project builds it through a ProjectReference. -->
+    <OutDir>$(MSBuildThisFileDirectory)bin\Lib\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildThisFileDirectory)tmp\Lib\$(Configuration)\</IntDir>
+  </PropertyGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>MaxSpeed</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_WINDOWS;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+    <ClCompile>
+      <WarningLevel>Level3</WarningLevel>
+      <Optimization>Disabled</Optimization>
+      <FunctionLevelLinking>true</FunctionLevelLinking>
+      <IntrinsicFunctions>false</IntrinsicFunctions>
+      <PreprocessorDefinitions>WIN32;_DEBUG;_WINDOWS;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
+      <FloatingPointModel>Fast</FloatingPointModel>
+      <LanguageStandard>stdcpplatest</LanguageStandard>
+      <BasicRuntimeChecks>EnableFastChecks</BasicRuntimeChecks>
+    </ClCompile>
+  </ItemDefinitionGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+</Project>

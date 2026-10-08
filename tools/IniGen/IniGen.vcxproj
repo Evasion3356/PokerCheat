@@ -15,6 +15,7 @@
   <ItemGroup>
     <ClCompile Include="IniGen.cpp" />
     <ClCompile Include="..\..\src\Config.cpp" />
+    <ClCompile Include="..\..\src\PokerCheatConfig.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\src\Config.h" />

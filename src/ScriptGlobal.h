@@ -19,6 +19,8 @@
 #include "script.h" // getGlobalPtr (main.h)
 
 #include <cstdint>
+namespace PokerCheat
+{
 
 class ScriptGlobal
 {
@@ -54,3 +56,4 @@ public:
 		return slot ? static_cast<std::int32_t>(*slot & 0xFFFFFFFFu) : 0;
 	}
 };
+} // namespace PokerCheat

@@ -11,12 +11,14 @@
 #include <string>
 #include <exception>
 
+namespace Config = PokerCheat::Config;
+
 namespace
 {
 	using Section = inipp::Ini<char>::Section;
 
-	Config::Values g_values;
-	bool g_loaded = false; // true once a load has actually finished and published g_values
+	// The library's live values (PokerCheatConfig.cpp); Reload() fills them.
+	Config::Values& g_values = Config::Mutable();
 
 	// Where PokerCheat.ini is loaded from and saved to: next to the .asi, or
 	// %LOCALAPPDATA%\RDR2ASIMods\PokerCheat.ini when the game folder isn't
@@ -203,7 +205,7 @@ namespace
 	}
 }
 
-namespace Config
+namespace PokerCheat::Config
 {
 	void Reload()
 	{
@@ -233,14 +235,5 @@ namespace Config
 			Log::Write("Config::Reload -- unknown non-std exception -- keeping previous config values");
 		}
 
-		g_loaded = true;
-	}
-
-	const Values& Get()
-	{
-		if (!g_loaded)
-			Reload();
-
-		return g_values;
 	}
 }

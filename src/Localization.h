@@ -28,7 +28,7 @@
 #include <cstdint>
 #include <string_view>
 
-namespace Localization
+namespace PokerCheat::Localization
 {
 	// Matches LOCALIZATION::GET_CURRENT_LANGUAGE()'s own return value
 	// mapping exactly (confirmed against rdr3-nativedb-data/natives.json's
