@@ -639,6 +639,21 @@ namespace PokerCheat
 		// shouldn't need to calibrate pixel positions themselves, and
 		// Release's PokerCheat.ini never gets a [CommunityCardIcons2D]
 		// section written to it at all (see Config.cpp).
+		// The game's own HUD is laid out in screen-HEIGHT units and anchored
+		// to a screen edge, but every X/width constant below is a fraction of
+		// screen WIDTH calibrated on 16:9. Multiplying a horizontal size or
+		// an offset from an edge by this factor keeps it matching the game's
+		// panels on other aspect ratios (1.0 on 16:9, 1.111 on 16:10).
+		float HudAspectScale()
+		{
+			int screenW = 0;
+			int screenH = 0;
+			GRAPHICS::GET_SCREEN_RESOLUTION(&screenW, &screenH);
+			if (screenW <= 0 || screenH <= 0)
+				return 1.0f;
+			return (16.0f / 9.0f) * static_cast<float>(screenH) / static_cast<float>(screenW);
+		}
+
 		constexpr int kCard2DIconCount = 5;
 		constexpr int kCard2DPredictedAlpha = 140; // ghosted, matches the old 3D-anchor alpha convention
 
@@ -675,6 +690,12 @@ namespace PokerCheat
 			float width = kReleaseCard2DIconWidth;
 			float height = kReleaseCard2DIconHeight;
 #endif
+
+			// Right-anchored strip: scale the distance from the right edge.
+			const float aspectScale = HudAspectScale();
+			baseX = 1.0f - (1.0f - baseX) * aspectScale;
+			spacingX *= aspectScale;
+			width *= aspectScale;
 
 			for (int i = 0; i < kCard2DIconCount; i++)
 			{
@@ -792,8 +813,15 @@ namespace PokerCheat
 			float labelOffsetY = kReleaseSeatCardIconLabelOffsetY;
 #endif
 
+			// Left-anchored strip: scale the distance from the left edge.
+			const float aspectScale = HudAspectScale();
+			baseX *= aspectScale;
+			spacingX *= aspectScale;
+			width *= aspectScale;
+			labelOffsetX *= aspectScale;
+
 			float x = baseX;
-			float y = baseY + static_cast<float>(relOffset - 1) * stepY;
+			float y = baseY +static_cast<float>(relOffset - 1) * stepY;
 
 			const std::int32_t ranks[kSeatCardIconCount] = { rank0, rank1 };
 			const std::int32_t suits[kSeatCardIconCount] = { suit0, suit1 };
@@ -897,6 +925,8 @@ namespace PokerCheat
 			float winPredictionX = kReleaseWinPredictionX;
 			float winPredictionY = kReleaseWinPredictionY;
 #endif
+			// Centre-anchored: scale the distance from mid-screen.
+			winPredictionX = 0.5f - (0.5f - winPredictionX) * HudAspectScale();
 			const char* formatText = BgFormatText(40, { label });
 
 			UIDEBUG::_BG_SET_TEXT_COLOR(r, g, b, 255);
