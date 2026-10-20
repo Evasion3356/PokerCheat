@@ -5,6 +5,13 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.8.0] - 2026-10-19
+
+### Fixed
+- The HUD's horizontal layout now scales with the screen's aspect ratio, so
+  it lines up with the game's own panels on 16:10 (and other non-16:9)
+  displays.
+
 ## [1.7.0] - 2026-09-29
 
 ### Added
