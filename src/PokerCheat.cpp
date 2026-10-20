@@ -813,9 +813,13 @@ namespace PokerCheat
 			float labelOffsetY = kReleaseSeatCardIconLabelOffsetY;
 #endif
 
-			// Left-anchored strip: scale the distance from the left edge.
+			// The seat panels' left edge does NOT track the aspect ratio (a 16:10
+			// user's hand-tuned BaseX stayed at the 16:9 value), so baseX is left
+			// alone; only the card size/spacing scale, to keep the cards' shape.
+			// Their rows sit lower on 16:10 (0.843 vs 0.83 on 2560x1600), a
+			// single data point, so the shift is linear in the aspect scale.
 			const float aspectScale = HudAspectScale();
-			baseX *= aspectScale;
+			baseY += 0.117f * (aspectScale - 1.0f);
 			spacingX *= aspectScale;
 			width *= aspectScale;
 			labelOffsetX *= aspectScale;

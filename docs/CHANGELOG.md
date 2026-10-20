@@ -5,6 +5,13 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.8.1] - 2026-10-20
+
+### Fixed
+- Opponent card icons now line up with the game's seat panels on 16:10
+  displays: their left edge is no longer shifted by the aspect-ratio
+  scaling, and their rows sit slightly lower.
+
 ## [1.8.0] - 2026-10-19
 
 ### Fixed
