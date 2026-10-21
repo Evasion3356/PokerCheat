@@ -668,24 +668,39 @@ namespace PokerCheat
 			return TRUE;
 		}
 
+		// Cached: the size only changes when the user switches resolution or
+		// window mode, so it is re-read at most once a second rather than on
+		// every draw call.
 		bool GetRenderSize(int& width, int& height)
 		{
 			static HWND gameWindow = nullptr;
-			if (gameWindow == nullptr || !IsWindow(gameWindow))
+			static int cachedWidth = 0;
+			static int cachedHeight = 0;
+			static ULONGLONG nextRefreshMs = 0;
+
+			const ULONGLONG nowMs = GetTickCount64();
+			if (nowMs >= nextRefreshMs || cachedWidth <= 0)
 			{
-				gameWindow = nullptr;
-				EnumWindows(FindGameWindowProc, reinterpret_cast<LPARAM>(&gameWindow));
+				// Retry sooner while no window has been found yet.
+				nextRefreshMs = nowMs + (cachedWidth > 0 ? 1000 : 250);
+
+				if (gameWindow == nullptr || !IsWindow(gameWindow))
+				{
+					gameWindow = nullptr;
+					EnumWindows(FindGameWindowProc, reinterpret_cast<LPARAM>(&gameWindow));
+				}
+
+				RECT client{};
+				if (gameWindow != nullptr && GetClientRect(gameWindow, &client) && client.right > 0 && client.bottom > 0)
+				{
+					cachedWidth = client.right;
+					cachedHeight = client.bottom;
+				}
 			}
 
-			RECT client{};
-			if (gameWindow != nullptr && GetClientRect(gameWindow, &client) && client.right > 0 && client.bottom > 0)
-			{
-				width = client.right;
-				height = client.bottom;
-				return true;
-			}
-
-			return false;
+			width = cachedWidth;
+			height = cachedHeight;
+			return cachedWidth > 0 && cachedHeight > 0;
 		}
 
 		float HudAspectScale()
