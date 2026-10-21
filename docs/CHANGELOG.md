@@ -5,6 +5,13 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.8.3] - 2026-10-21
+
+### Fixed
+- The board card icons line up with the game's own card strip on both 16:9
+  and 16:10 displays, including after switching resolution while the game
+  is running. 1.8.2 had shifted them slightly on 16:9.
+
 ## [1.8.2] - 2026-10-21
 
 ### Fixed
