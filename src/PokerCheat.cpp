@@ -714,15 +714,19 @@ namespace PokerCheat
 
 		constexpr int kCard2DIconCount = 5;
 		constexpr int kCard2DDrawOrder = 7;
+		constexpr float kAspectScale16x10Delta = 0.1111f; // HudAspectScale() - 1 at 16:10
+		constexpr float kCard2DResidualBaseX16x10 = 0.0045f;
+		constexpr float kCard2DResidualSpacingX16x10 = -0.0006f;
+		constexpr float kCard2DResidualHeight16x10 = 0.0005f;
 		constexpr int kDefaultDrawOrder = 1;
 		constexpr int kCard2DPredictedAlpha = 140; // ghosted, matches the old 3D-anchor alpha convention
 
 #ifndef _DEBUG
-		constexpr float kReleaseCard2DIconBaseX = 0.825f;
+		constexpr float kReleaseCard2DIconBaseX = 0.821f;
 		constexpr float kReleaseCard2DIconY = 0.078f;
-		constexpr float kReleaseCard2DIconSpacingX = 0.0335f;
+		constexpr float kReleaseCard2DIconSpacingX = 0.034f;
 		constexpr float kReleaseCard2DIconWidth = 0.03f;
-		constexpr float kReleaseCard2DIconHeight = 0.0755f;
+		constexpr float kReleaseCard2DIconHeight = 0.075f;
 #endif
 
 		// Draws all 5 eventual community card icons at the calibrated
@@ -756,6 +760,15 @@ namespace PokerCheat
 			baseX = 1.0f - (1.0f - baseX) * aspectScale;
 			spacingX *= aspectScale;
 			width *= aspectScale;
+
+			// The pure scale is within a few pixels of the game's strip, but two
+			// hand-tuned samples (16:9 and 16:10, the latter confirmed at 1920x1200
+			// and 2560x1600) show a small residual at 16:10. Blend it in between the
+			// two calibrated aspect ratios; held at 16:10's value beyond it.
+			const float residualBlend = std::clamp((aspectScale - 1.0f) / kAspectScale16x10Delta, 0.0f, 1.0f);
+			baseX += kCard2DResidualBaseX16x10 * residualBlend;
+			spacingX += kCard2DResidualSpacingX16x10 * residualBlend;
+			height += kCard2DResidualHeight16x10 * residualBlend;
 
 #ifdef _DEBUG
 			// Logged again whenever the render size changes, so one session at a
