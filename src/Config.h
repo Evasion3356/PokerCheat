@@ -120,11 +120,11 @@ namespace PokerCheat::Config
 		// DrawCommunityCardIcons()'s Release branch) -- the same
 		// user-confirmed "perfect" numbers below, just not
 		// config-overridable outside Debug.
-		float Card2DIconBaseX = 0.821f;
+		float Card2DIconBaseX = 0.825f;
 		float Card2DIconY = 0.078f;
-		float Card2DIconSpacingX = 0.034f;
+		float Card2DIconSpacingX = 0.0335f;
 		float Card2DIconWidth = 0.03f;
-		float Card2DIconHeight = 0.075f;
+		float Card2DIconHeight = 0.0755f;
 
 		// Opponent hole-card icons, one pair per occupied seat other than
 		// the player -- see PokerCheat.cpp's DrawSeatCardIcons() header

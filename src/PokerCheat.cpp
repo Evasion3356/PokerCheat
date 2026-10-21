@@ -644,25 +644,70 @@ namespace PokerCheat
 		// screen WIDTH calibrated on 16:9. Multiplying a horizontal size or
 		// an offset from an edge by this factor keeps it matching the game's
 		// panels on other aspect ratios (1.0 on 16:9, 1.111 on 16:10).
+		//
+		// The size comes from the game window's client area, not
+		// GET_SCREEN_RESOLUTION: that native kept reporting 1280x720 while the
+		// game rendered 1920x1200, in fullscreen as well. With no window found
+		// the scale falls back to 1.0 (16:9).
+		BOOL CALLBACK FindGameWindowProc(HWND window, LPARAM result)
+		{
+			DWORD processId = 0;
+			GetWindowThreadProcessId(window, &processId);
+			if (processId != GetCurrentProcessId() || !IsWindowVisible(window))
+				return TRUE;
+
+			RECT client{};
+			if (!GetClientRect(window, &client))
+				return TRUE;
+
+			HWND& best = *reinterpret_cast<HWND*>(result);
+			RECT bestClient{};
+			if (best == nullptr || !GetClientRect(best, &bestClient)
+				|| (client.right - client.left) * (client.bottom - client.top) > (bestClient.right - bestClient.left) * (bestClient.bottom - bestClient.top))
+				best = window;
+			return TRUE;
+		}
+
+		bool GetRenderSize(int& width, int& height)
+		{
+			static HWND gameWindow = nullptr;
+			if (gameWindow == nullptr || !IsWindow(gameWindow))
+			{
+				gameWindow = nullptr;
+				EnumWindows(FindGameWindowProc, reinterpret_cast<LPARAM>(&gameWindow));
+			}
+
+			RECT client{};
+			if (gameWindow != nullptr && GetClientRect(gameWindow, &client) && client.right > 0 && client.bottom > 0)
+			{
+				width = client.right;
+				height = client.bottom;
+				return true;
+			}
+
+			return false;
+		}
+
 		float HudAspectScale()
 		{
 			int screenW = 0;
 			int screenH = 0;
-			GRAPHICS::GET_SCREEN_RESOLUTION(&screenW, &screenH);
-			if (screenW <= 0 || screenH <= 0)
+			if (!GetRenderSize(screenW, screenH))
 				return 1.0f;
 			return (16.0f / 9.0f) * static_cast<float>(screenH) / static_cast<float>(screenW);
 		}
 
 		constexpr int kCard2DIconCount = 5;
+		constexpr int kCard2DDrawOrder = 7;
+		constexpr int kDefaultDrawOrder = 1;
 		constexpr int kCard2DPredictedAlpha = 140; // ghosted, matches the old 3D-anchor alpha convention
 
 #ifndef _DEBUG
-		constexpr float kReleaseCard2DIconBaseX = 0.821f;
+		constexpr float kReleaseCard2DIconBaseX = 0.825f;
 		constexpr float kReleaseCard2DIconY = 0.078f;
-		constexpr float kReleaseCard2DIconSpacingX = 0.034f;
+		constexpr float kReleaseCard2DIconSpacingX = 0.0335f;
 		constexpr float kReleaseCard2DIconWidth = 0.03f;
-		constexpr float kReleaseCard2DIconHeight = 0.075f;
+		constexpr float kReleaseCard2DIconHeight = 0.0755f;
 #endif
 
 		// Draws all 5 eventual community card icons at the calibrated
@@ -697,6 +742,27 @@ namespace PokerCheat
 			spacingX *= aspectScale;
 			width *= aspectScale;
 
+#ifdef _DEBUG
+			// Logged again whenever the render size changes, so one session at a
+			// few -width/-height launch sizes records the effective layout of each.
+			static int loggedW = 0;
+			static int loggedH = 0;
+			int renderW = 0;
+			int renderH = 0;
+			GetRenderSize(renderW, renderH);
+			if (renderW != loggedW || renderH != loggedH)
+			{
+				loggedW = renderW;
+				loggedH = renderH;
+				Log::Write("Board strip layout: window={}x{} aspectScale={:.3f} effective baseX={:.4f} spacingX={:.4f} width={:.4f} y={:.4f} height={:.4f}", renderW, renderH, aspectScale, baseX, spacingX, width, iconY, height);
+			}
+#endif
+
+			// The game's own strip (card backs until the cards are dealt) is a
+			// Scaleform widget drawn above default-order script sprites, which
+			// hid these icons at 16:10 -- draw them on a higher order.
+			GRAPHICS::SET_SCRIPT_GFX_DRAW_ORDER(kCard2DDrawOrder);
+
 			for (int i = 0; i < kCard2DIconCount; i++)
 			{
 				if (ranks[i] < 2)
@@ -708,6 +774,8 @@ namespace PokerCheat
 
 				GRAPHICS::DRAW_SPRITE(const_cast<char*>(cardSetDict.data()), const_cast<char*>(BuildCardTextureName(ranks[i], suits[i])), x, iconY, width, height, 0.0f, 255, 255, 255, alpha, 0);
 			}
+
+			GRAPHICS::SET_SCRIPT_GFX_DRAW_ORDER(kDefaultDrawOrder);
 		}
 
 		// Opponent hole-card icons, one pair per occupied opponent seat
@@ -823,6 +891,15 @@ namespace PokerCheat
 			spacingX *= aspectScale;
 			width *= aspectScale;
 			labelOffsetX *= aspectScale;
+
+#ifdef _DEBUG
+			static float loggedSeatScale = 0.0f;
+			if (aspectScale != loggedSeatScale)
+			{
+				loggedSeatScale = aspectScale;
+				Log::Write("Seat icon layout: aspectScale={:.3f} effective baseX={:.4f} baseY={:.4f} stepY={:.4f} spacingX={:.4f} width={:.4f} height={:.4f}", aspectScale, baseX, baseY, stepY, spacingX, width, height);
+			}
+#endif
 
 			float x = baseX;
 			float y = baseY +static_cast<float>(relOffset - 1) * stepY;

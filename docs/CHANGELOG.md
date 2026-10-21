@@ -5,6 +5,17 @@ loosely follows [Keep a Changelog](https://keepachangelog.com/); this
 tracks what an end user experiences, not internal implementation history
 (see `JOURNAL.md` for the full session-by-session derivation/bugfix log).
 
+## [1.8.2] - 2026-10-21
+
+### Fixed
+- The HUD layout now follows the game window's real size instead of the
+  game's reported screen resolution, which was wrong under some launch
+  options and in fullscreen, so the card icons now line up on 16:10
+  displays.
+- The board card icons are drawn above the game's own card strip instead of
+  behind it, so the predicted cards show before they are dealt.
+- Board strip position and spacing retuned to match the game's strip.
+
 ## [1.8.1] - 2026-10-20
 
 ### Fixed
